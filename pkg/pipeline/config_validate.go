@@ -12,7 +12,7 @@ import (
 )
 
 func ValidateConfigValues(ctx *RuntimeContext, needed NeededSet) error {
-	return validateConfigValuesInternal(ctx, needed, false)
+	return validateConfigValuesInternal(ctx, needed, false, true)
 }
 
 func validateConfigVisibility(ctx *RuntimeContext) error {
@@ -50,12 +50,14 @@ func validateConfigVisibility(ctx *RuntimeContext) error {
 	return nil
 }
 
-func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkToolchain bool) error {
+func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkToolchain, checkVisibility bool) error {
 	if ctx == nil || ctx.Config == nil {
 		return nil
 	}
-	if err := validateConfigVisibility(ctx); err != nil {
-		return err
+	if checkVisibility {
+		if err := validateConfigVisibility(ctx); err != nil {
+			return err
+		}
 	}
 	if rootOverrides := configRootOverrides(ctx); len(rootOverrides) > 0 && ctx.DepGraph != nil {
 		if _, err := computeRootSeeds(ctx.DepGraph, rootOverrides); err != nil {
@@ -112,9 +114,6 @@ func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkTo
 		if entry == nil {
 			continue
 		}
-		if err := checkPackageVisibility(ctx, "@local", pkgName); err != nil {
-			return fmt.Errorf("entries.%s: %w", pkgName, err)
-		}
 		pkgOpts := ctx.allOptions[pkgName]
 		optNames := make([]string, 0, len(entry.Options))
 		for k := range entry.Options {
@@ -144,9 +143,6 @@ func validateConfigValuesInternal(ctx *RuntimeContext, needed NeededSet, checkTo
 				continue
 			}
 			if opt := pkgOpts[k]; opt != nil && !opt.IsGlobal() {
-				if isExternalInternalOption(ctx, pkgName, opt) {
-					return fmt.Errorf("entries.%s.options.%s: option is internal to container %q and cannot be set externally", pkgName, k, packageContainerID(ctx, pkgName))
-				}
 				norm := api.NormalizeOptionValue(opt, val)
 				if err := api.ValidateOptionValue(opt, norm); err != nil {
 					return fmt.Errorf("entries.%s.options.%s: %w", pkgName, k, err)
@@ -171,7 +167,7 @@ func ValidateConfigStrict(ctx *RuntimeContext) ([]string, error) {
 	extendChipChoice(ctx, needed)
 
 	var issues []string
-	if valErr := validateConfigValuesInternal(ctx, needed, true); valErr != nil {
+	if valErr := validateConfigValuesInternal(ctx, needed, true, false); valErr != nil {
 		issues = append(issues, valErr.Error())
 	}
 

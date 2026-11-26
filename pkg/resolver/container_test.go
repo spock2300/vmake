@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -495,5 +496,71 @@ func TestResolveProjectLazyLocalRoots(t *testing.T) {
 	}
 	if r.Graph().Packages["//unused"] != nil {
 		t.Fatal("//unused must not be loaded")
+	}
+}
+
+func TestLocalPathContainerAllowsSiblingRelativePath(t *testing.T) {
+	root := canonicalTempDir(t)
+	project := filepath.Join(root, "app")
+	writeProjectFiles(t, project, map[string]string{
+		"vmake.json": `{
+			"roots": ["//"],
+			"modules": {
+				"vendor/mid": {"path": "../mid"}
+			}
+		}`,
+		"build.go": requirePackageMain("vendor/mid/api"),
+	})
+	writeProjectFiles(t, filepath.Join(root, "mid"), map[string]string{
+		"vmake.json": `{
+			"exports": {"api": "//api"},
+			"modules": {
+				"vendor/shared": {"path": "../shared"}
+			}
+		}`,
+		"api/build.go": requirePackageMain("vendor/shared/util"),
+	})
+	writeProjectFiles(t, filepath.Join(root, "shared"), map[string]string{
+		"util/build.go": emptyPackageMain,
+	})
+
+	r := NewResolver(nil, filepath.Join(project, ".vmake_deps"))
+	if err := r.ResolveProject(project, nil); err != nil {
+		t.Fatalf("local-declared path container should allow sibling .. path: %v", err)
+	}
+	if r.Graph().Packages["vendor/shared/util"] == nil {
+		t.Fatalf("expected vendor/shared/util to resolve, got %v", r.Graph().Packages)
+	}
+}
+
+func TestRemoteContainerRejectsSymlinkEscapingPackageDir(t *testing.T) {
+	outside := canonicalTempDir(t)
+	writeProjectFiles(t, outside, map[string]string{
+		"build.go": emptyPackageMain,
+	})
+	bare := writeContainerRepo(t, map[string]string{
+		"vmake.json":  `{"exports": {"ok": "//ok"}}`,
+		"ok/build.go": emptyPackageMain,
+	})
+	r := newContainerTestResolver(t, bare)
+	project := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/ok")
+	if err := r.ResolveProject(project, nil); err != nil {
+		t.Fatalf("initial resolve failed: %v", err)
+	}
+	containerDir := r.Graph().Containers["testnative/mother"].Dir
+	escapeLink := filepath.Join(containerDir, "escape")
+	if err := os.Symlink(outside, escapeLink); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(containerDir, "vmake.json"), []byte(`{"exports": {"escape": "//escape"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r2 := newTrustedTestResolver(r.repoMgr, r.depsDir)
+	r2.SetSourceManager(r.sourceMgr)
+	defer r2.Close()
+	proj2 := writeLocalProject(t, map[string]string{"testnative/mother": "*"}, nil, "testnative/mother/escape")
+	err := r2.ResolveProject(proj2, nil)
+	if err == nil || !strings.Contains(err.Error(), "escapes container") {
+		t.Fatalf("expected symlink escape rejection in remote container, got %v", err)
 	}
 }

@@ -149,7 +149,7 @@ writes on `p.DryRun()`. The guard covers the wrapped symbols only.
 | `mode`, `toolchain` | Effective build mode and project toolchain name |
 | `toolchainInfo` | `{name, targetOs?, targetTriple?, installPath?, cc?, cxx?, ar?, ld?}` |
 | `global` | Effective global option values, including `mode` and `toolchain` |
-| `globalOptionDefs` | Object keyed by option name; each value is `{type, default?, description?, values?, group?}`; omitted when none. Effective values are in `global` |
+| `globalOptionDefs` | Object keyed by option name; each value is `{type, default?, description?, values?, group?, advanced?}`; omitted when none. Effective values are in `global` |
 | `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | Global `AddGlobal*` declarations from needed packages in package/declaration order; duplicates preserved; omitted when empty |
 | `globalDefines` | Auto-exported global-option macros as `NAME=value`, sorted, without `-D`; omitted when empty |
 | `overrides` | Typed `--set` values keyed `[package:]option`; omitted when unused |
@@ -189,11 +189,11 @@ Each `packages` entry has `name`, `kind` (`local`/`native`/`registry`; a `local`
 package is spelled `git` under `vmake deps status --json`),
 `needed`, `sourcePresent`, `deps`, optional remote
 `repo`/`version`/`commit`/`url`, local `path`, absolute `sourceDir`,
-`packageDir` (directory containing `build.go`), `srcDir` (materialized or linked source tree backing `p.SrcDir()`),
+`packageDir` (`SourceDir()`: directory containing `build.go` for local/native packages, or `<deps>/<repo>/<pkg>/src` for registry packages), `srcDir` (materialized or linked source tree backing `p.SrcDir()`),
 optional `linked`/`linkPath` for `pkg link` packages (version is then
 `0.0.0-local` and commit is the linked tree HEAD), `description`, `toolchain`, `platform` (`{targetOs, targetTriple}` resolved for that package; `targetOs` is the host OS when unset), `options` (effective values), `optionDefs`
 (object keyed by option name with `{type, default?, description?,
-values?, group?, internal?}`), and `targets` (needed packages that declare targets;
+values?, group?, internal?, advanced?}`), and `targets` (needed packages that declare targets;
 omitted for every package with `--no-targets`). `sourcePresent` is false when
 the expected source tree is missing or empty; that package also gets a
 `VMAKE_W_SOURCE_MISSING` warning when it is needed.

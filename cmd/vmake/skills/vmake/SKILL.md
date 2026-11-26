@@ -349,7 +349,7 @@ p.OnConfig(func(ctx *api.ConfigContext) {
 })
 ```
 
-Advanced options (`SetAdvanced(true)`) are a display tier only: the TUI hides unmodified default-valued advanced options by default (press `a` to toggle; explicitly configured advanced options stay visible), while CLI `--set`, `configs/*.json`, and `OnConfigureDeps` always allow overriding them. Container-internal options (`SetInternal(true)`) may only be configured or read within the same container (e.g. via `OnConfigureDeps`); external consumers cannot set them in `configs/*.json`, CLI `--set`, `OnConfigureDeps`, or cross-package reads, and the TUI workbench hides them. `GlobalOption` cannot be marked internal.
+Advanced options (`SetAdvanced(true)`) are a display tier only: the TUI hides unmodified default-valued advanced options by default (toggle via the clickable header/title/in-list controls or press `a`; explicitly configured advanced options stay visible), while CLI `--set`, `configs/*.json`, and `OnConfigureDeps` always allow overriding them. Container-internal options (`SetInternal(true)`) may only be configured or read within the same container (e.g. via `OnConfigureDeps`); external consumers cannot set them in `configs/*.json`, CLI `--set`, `OnConfigureDeps`, or cross-package reads, and the TUI workbench hides them. `GlobalOption` cannot be marked internal.
 
 ### Multiple Project Configurations
 

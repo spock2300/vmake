@@ -214,17 +214,5 @@ func mergeMapNoOverwrite[K comparable, V any](dst, src map[K]V) {
 }
 
 func MergeImportedOptions(localOpts map[string]*Option, localVals map[string]any, pkgs []*Package) (map[string]*Option, map[string]any) {
-	mergedOpts := make(map[string]*Option, len(localOpts))
-	mergedVals := make(map[string]any, len(localVals))
-	for k, v := range localOpts {
-		mergedOpts[k] = v
-	}
-	for k, v := range localVals {
-		mergedVals[k] = v
-	}
-	for _, dep := range pkgs {
-		mergeMapNoOverwrite(mergedOpts, dep.options)
-		mergeMapNoOverwrite(mergedVals, dep.cfgVals)
-	}
-	return mergedOpts, mergedVals
+	return BindMergeImportedOptions(localOpts, localVals, pkgs, nil)
 }

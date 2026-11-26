@@ -6,6 +6,37 @@ import (
 	"github.com/spock2300/vmake/pkg/config"
 )
 
+func filterVisibleDeps(ctx *RuntimeContext, deps []string) []string {
+	var visible []string
+	for _, dep := range deps {
+		if checkPackageVisibility(ctx, "@local", dep) == nil {
+			visible = append(visible, dep)
+		}
+	}
+	return visible
+}
+
+func filterVisibleOptionMap[V any](ctx *RuntimeContext, allOptions map[string]map[string]*api.Option, raw map[string]map[string]V) map[string]map[string]V {
+	out := make(map[string]map[string]V, len(raw))
+	for pkgName, vals := range raw {
+		if checkPackageVisibility(ctx, "@local", pkgName) != nil {
+			continue
+		}
+		pkgOpts := allOptions[pkgName]
+		filtered := make(map[string]V, len(vals))
+		for optName, val := range vals {
+			if opt := pkgOpts[optName]; opt != nil && isExternalInternalOption(ctx, pkgName, opt) {
+				continue
+			}
+			filtered[optName] = val
+		}
+		if len(filtered) > 0 {
+			out[pkgName] = filtered
+		}
+	}
+	return out
+}
+
 func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 	if ctx == nil || ctx.Resolver == nil || ctx.DepGraph == nil || ctx.Config == nil {
 		return nil
@@ -52,13 +83,7 @@ func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 		if checkPackageVisibility(ctx, "@local", name) != nil {
 			continue
 		}
-		var visibleDeps []string
-		for _, dep := range node.Deps {
-			if checkPackageVisibility(ctx, "@local", dep) == nil {
-				visibleDeps = append(visibleDeps, dep)
-			}
-		}
-		deps[name] = visibleDeps
+		deps[name] = filterVisibleDeps(ctx, node.Deps)
 		if node.Container != "" {
 			pkgContainer[name] = node.Container
 		}
@@ -82,24 +107,7 @@ func NewConfigWorkbench(ctx *RuntimeContext) *config.Workbench {
 		}
 		kconfigs[pkgName] = list
 	}
-	rawDerived := ctx.DerivedOptions()
-	derived := make(map[string]map[string]any, len(rawDerived))
-	for pkgName, vals := range rawDerived {
-		if checkPackageVisibility(ctx, "@local", pkgName) != nil {
-			continue
-		}
-		pkgOpts := rawOptions[pkgName]
-		filtered := make(map[string]any, len(vals))
-		for optName, val := range vals {
-			if opt := pkgOpts[optName]; opt != nil && isExternalInternalOption(ctx, pkgName, opt) {
-				continue
-			}
-			filtered[optName] = val
-		}
-		if len(filtered) > 0 {
-			derived[pkgName] = filtered
-		}
-	}
+	derived := filterVisibleOptionMap(ctx, rawOptions, ctx.DerivedOptions())
 	containers := make(map[string]config.WorkbenchContainer, len(ctx.DepGraph.Containers))
 	for id, c := range ctx.DepGraph.Containers {
 		if c == nil {

@@ -443,3 +443,45 @@ func TestOnConfigureDepsHasOptionHeterogeneousBoard(t *testing.T) {
 		t.Fatalf("//leaf:uart = %v, want true", vals["uart"])
 	}
 }
+
+func TestConfigLookupHidesInternalOptionsInErrorHintAcrossContainers(t *testing.T) {
+	reader := localNode("//app")
+	ext := &resolver.PackageNode{
+		ID:        "org/sdk/core",
+		Container: "org/sdk",
+		RelPath:   "core",
+		Exported:  true,
+		Source:    &buildscript.Source{Name: "org/sdk/core", Origin: api.SourceRemote},
+		Pkg:       api.NewPackage(),
+	}
+	extAccessor := api.NewConfigAccessor(nil, nil)
+	extOpts := map[string]*api.Option{
+		"public_opt": extAccessor.Option("public_opt").SetDefault(true),
+		"secret_opt": extAccessor.Option("secret_opt").SetDefault(false).SetInternal(true),
+	}
+	ext.Pkg.SetOptions(extOpts)
+
+	ctx := &RuntimeContext{
+		Config: emptyConfig(),
+		DepGraph: &resolver.Graph{Packages: map[string]*resolver.PackageNode{
+			"//app":        reader,
+			"org/sdk/core": ext,
+		}},
+		allOptions: map[string]map[string]*api.Option{
+			"org/sdk/core": extOpts,
+		},
+		globalOptions: map[string]*api.Option{},
+	}
+
+	lookup := newConfigLookup(ctx, "//app", nil, nil)
+	_, _, err := lookup("org/sdk/core", "nonexistent")
+	if err == nil {
+		t.Fatal("expected unknown option error")
+	}
+	if strings.Contains(err.Error(), "secret_opt") {
+		t.Fatalf("cross-container unknown-option hint leaked internal option: %v", err)
+	}
+	if !strings.Contains(err.Error(), "public_opt") {
+		t.Fatalf("expected public_opt in available hint: %v", err)
+	}
+}

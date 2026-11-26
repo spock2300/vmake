@@ -399,7 +399,7 @@ func CheckoutManifestRemoteEntry(
 		Ref:  entry.Ref,
 	}
 	if entry.Source == "git" {
-		if thirdPartyRoot, ok := managedThirdPartyRoot(sourceMgr, entry.Name); ok {
+		if thirdPartyRoot, ok := managedThirdPartyRoot(sourceMgr, "", entry.Name); ok {
 			req.Key = entry.Name
 			req.Root = thirdPartyRoot
 		}

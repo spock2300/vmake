@@ -382,6 +382,7 @@ func (o *Option) SetShowIf(fn func(ctx *ConfigContext) bool) *Option  // 条件�
 func (o *Option) SetOnApply(fn func(ctx *ConfigContext, val any)) *Option  // 选项值解析后的回调；按选项名排序执行，非声明顺序
 func (o *Option) SetGroup(group string) *Option            // SetGroup(api.GroupGlobal)（"Global"）使选项成为全局选项
 func (o *Option) SetInternal(internal bool) *Option        // 标记为容器内部选项：禁止跨容器读写/配置/TUI 暴露（GlobalOption 不可标记为 internal）
+func (o *Option) SetAdvanced(advanced bool) *Option        // 标记为高级调参选项（仅 UI 分层）：TUI 默认折叠（点击顶栏/标题栏/折叠行或按 a 展开），CLI -s 与 configs/*.json 始终允许覆盖
 
 // 获取方法
 func (o *Option) Name() string
@@ -394,6 +395,7 @@ func (o *Option) ShowIf() func(ctx *ConfigContext) bool
 func (o *Option) OnApply() func(ctx *ConfigContext, val any)
 func (o *Option) IsGlobal() bool
 func (o *Option) IsInternal() bool
+func (o *Option) IsAdvanced() bool
 func (o *Option) MacroName() string
 func (o *Option) MacroDefines(val any) ([]string, error)  // 宏的 -D 内容，不含 "-D" 前缀
 

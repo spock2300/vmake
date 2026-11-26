@@ -229,11 +229,11 @@ dependency tree labels those same packages by their primary target.
 | `toolchain` | string | Effective project toolchain name |
 | `toolchainInfo` | object | `{name, targetOs?, targetTriple?, installPath?, cc?, cxx?, ar?, ld?}`; optional fields are omitted when empty |
 | `global` | object | Effective global option values, including `mode` and `toolchain` |
-| `globalOptionDefs` | object? | Declared global options keyed by option name, each `{type, default?, description?, values?, group?}`; omitted when none. Effective values are in `global` |
+| `globalOptionDefs` | object? | Declared global options keyed by option name, each `{type, default?, description?, values?, group?, advanced?}`; omitted when none. Effective values are in `global` |
 | `globalCFlags`, `globalCxxFlags`, `globalLdFlags`, `globalLinks` | array? | Global `AddGlobal*` declarations from needed packages in package resolution then declaration order; duplicates preserved (see [Global flags](#global-flags)) |
 | `globalDefines` | array? | Auto-exported global-option macros as `NAME=value`, sorted, without the `-D` prefix (see [Global flags](#global-flags)) |
 | `overrides` | object | Coerced `--set` values keyed `[package:]option`; omitted when no override was given |
-| `roots` | array | `root`/`roots` from the active configuration when set, else `vmake.json` `roots` (or `["//"]` when root `build.go` exists), otherwise needed local packages that no needed package depends on, sorted |
+| `roots` | array | `root`/`roots` from the active configuration when set, else `vmake.json` `roots` (or `dev_roots` when building locally without `roots`, or `["//"]` when root `build.go` exists), otherwise needed local packages that no needed package depends on, sorted |
 | `containers` | array? | Resolved module containers (`{id, kind, repo?, version?, commit?, url?, dir?, linked?, linkPath?}`), sorted by ID |
 | `packages` | array | One entry per resolved package, sorted by name (each entry carries `container` identifying its owning container) |
 | `graph` | array | Package dependency edges `{from, to}`, sorted by `from` then `to` (merges `OnRequire`, target `AddDeps`/`UseRequires`, and `BuildSubGraph` edges; `--no-targets` reports `OnRequire` edges only). Each edge also carries optional `kinds` (`require`, `subgraph`, `target`) and `via` (the declaring call sites), the same attribution `vmake deps graph --json` reports |
@@ -291,7 +291,7 @@ of these files.
 | `url` | string? | Resolved source URL for remote packages |
 | `path` | string? | Local packages: source directory relative to `root` (slash-separated) |
 | `sourceDir` | string? | Absolute source directory; a linked package reports its local working tree |
-| `packageDir` | string? | Absolute package root directory containing `build.go` (`SourceDir()`) |
+| `packageDir` | string? | Absolute package root directory (`SourceDir()`; for local/native packages the directory containing `build.go`, for registry packages `<deps>/<repo>/<pkg>/src`) |
 | `srcDir` | string? | Absolute active source tree (`SrcDir()`), including `SetGit` worktrees and linked trees |
 | `sourcePresent` | bool | Whether the expected source tree exists and is non-empty (see `VMAKE_W_SOURCE_MISSING`) |
 | `linked` | bool? | Present and true when `vmake pkg link` supplies the package source |
@@ -303,7 +303,7 @@ of these files.
 | `toolchain` | string? | Per-package toolchain, present for needed packages |
 | `platform` | object | Per-package resolved target platform `{targetOs, targetTriple}`; both keys are always present and `targetOs` is the host OS when no target OS is configured |
 | `options` | object? | Declared options of this package with effective values (global declarations included); omitted when none |
-| `optionDefs` | object? | Declared package options keyed by option name with `{type, default?, description?, values?, group?, internal?}`; omitted when none |
+| `optionDefs` | object? | Declared package options keyed by option name with `{type, default?, description?, values?, group?, internal?, advanced?}`; omitted when none |
 | `deps` | array | Package dependency names, sorted (includes cross-package target and `BuildSubGraph` edges unless `--no-targets` is set); always present |
 | `targets` | array? | Declared targets; present only for needed packages and omitted when the package declares none, its source tree is missing, or inspect runs with `--no-targets` |
 

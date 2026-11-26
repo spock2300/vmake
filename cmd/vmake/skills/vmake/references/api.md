@@ -512,7 +512,7 @@ All setters are fluent (return `*Option`).
 | `SetMacroName` | `(name string)` | Override the generated `CONFIG_<NAME>` macro name on both package options (`GenerateConfigDefines`/`GenerateConfigHeader`) and global options (auto-exported); a `%s`/`%v` in the name renders the option value (`PY32F539xx%s` + `M` → `PY32F539xxM=1`) |
 | `SetExportDefine` | `(export bool)` | Enable/disable automatic global `-DCONFIG_<NAME>` export on a `GlobalOption` (`true` by default; `SetExportDefine(false)` keeps the option readable across `OnRequire`/`OnBuild` without broadcasting a global compiler define) |
 | `SetInternal` | `(internal bool)` | Restrict a package option to its owning container; cannot be set or read across container seams or shown in external TUI workbenches (`GlobalOption` cannot be internal) |
-| `SetAdvanced` | `(advanced bool)` | Mark an option as advanced (UI-only tiering): collapsed by default in the TUI (toggle with `a`; explicitly overridden values remain visible), tagged `advanced: true` in `inspect`, and always overridable externally via `--set`/`configs/*.json` |
+| `SetAdvanced` | `(advanced bool)` | Mark an option as advanced (UI-only tiering): collapsed by default in the TUI (toggle via clickable header/title/in-list controls or `a`; explicitly overridden values remain visible), tagged `advanced: true` in `inspect`, and always overridable externally via `--set`/`configs/*.json` |
 
 Getters: `Name()`, `Type()`, `Default()`, `Description()`, `Values()`, `ShowIf()`, `OnApply()`, `Group()`, `MacroName()`, `ExportDefine()`, `ExportDefineSet()`, `IsGlobal()`, `IsInternal()`, `IsAdvanced()`, `MacroDefines(val any) ([]string, error)`.
 

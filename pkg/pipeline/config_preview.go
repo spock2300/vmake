@@ -75,13 +75,7 @@ func NewConfigPreviewer(ctx *RuntimeContext) func(*config.ConfigFile) (config.Pr
 			if node == nil || checkPackageVisibility(&work, "@local", name) != nil {
 				continue
 			}
-			var visibleDeps []string
-			for _, dep := range node.Deps {
-				if checkPackageVisibility(&work, "@local", dep) == nil {
-					visibleDeps = append(visibleDeps, dep)
-				}
-			}
-			activeDeps[name] = visibleDeps
+			activeDeps[name] = filterVisibleDeps(&work, node.Deps)
 		}
 		activePackages := make(map[string]bool, len(needed.Set))
 		for name, ok := range needed.Set {
@@ -89,40 +83,8 @@ func NewConfigPreviewer(ctx *RuntimeContext) func(*config.ConfigFile) (config.Pr
 				activePackages[name] = true
 			}
 		}
-		derivedOpts := make(map[string]map[string]any, len(work.derivedOptions))
-		for pkg, m := range work.derivedOptions {
-			if checkPackageVisibility(&work, "@local", pkg) != nil {
-				continue
-			}
-			pkgOpts := work.allOptions[pkg]
-			filtered := make(map[string]any, len(m))
-			for optName, val := range m {
-				if opt := pkgOpts[optName]; opt != nil && isExternalInternalOption(&work, pkg, opt) {
-					continue
-				}
-				filtered[optName] = val
-			}
-			if len(filtered) > 0 {
-				derivedOpts[pkg] = filtered
-			}
-		}
-		derivedOwners := make(map[string]map[string]string, len(owners))
-		for pkg, m := range owners {
-			if checkPackageVisibility(&work, "@local", pkg) != nil {
-				continue
-			}
-			pkgOpts := work.allOptions[pkg]
-			filtered := make(map[string]string, len(m))
-			for optName, owner := range m {
-				if opt := pkgOpts[optName]; opt != nil && isExternalInternalOption(&work, pkg, opt) {
-					continue
-				}
-				filtered[optName] = owner
-			}
-			if len(filtered) > 0 {
-				derivedOwners[pkg] = filtered
-			}
-		}
+		derivedOpts := filterVisibleOptionMap(&work, work.allOptions, work.derivedOptions)
+		derivedOwners := filterVisibleOptionMap(&work, work.allOptions, owners)
 
 		return config.Preview{
 			Roots:          slices.Clone(needed.Roots),

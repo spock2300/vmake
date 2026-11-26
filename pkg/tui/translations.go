@@ -19,7 +19,7 @@ var translations = map[language]map[textID]string{
 		textContainerID: "container", textContainerKind: "kind", textContainerVersion: "version", textContainerLink: "linked",
 		textGroupPackages: "packages", textGroupSummaryCount: "%d active / %d total (%d configurable)",
 		textGroupHint: "Enter/→ expand or collapse · ↓ select package",
-		textAdvanced: "advanced", textAllOptions: "All Options", textAdvancedGroup: "Advanced", textAdvancedHiddenBadge: "▸ +%d adv", textAdvancedShownBadge: "▾ hide adv",
+		textAllOptions: "All Options", textAdvancedGroup: "Advanced", textAdvancedHiddenBadge: "▸ +%d adv", textAdvancedShownBadge: "▾ hide adv",
 		textShowAdvancedRow: "▸ Show all advanced options (%d hidden · click / Enter / a)", textHideAdvancedRow: "▾ Hide advanced options (%d shown · click / Enter / a)",
 	},
 	languageChinese: {
@@ -40,7 +40,7 @@ var translations = map[language]map[textID]string{
 		textContainerID: "容器", textContainerKind: "类型", textContainerVersion: "版本", textContainerLink: "本地链接",
 		textGroupPackages: "包含包", textGroupSummaryCount: "%d 个生效 / 共 %d 个（%d 个可配置）",
 		textGroupHint: "Enter/→ 展开或折叠 · ↓ 选择软件包",
-		textAdvanced: "高级选项", textAllOptions: "全部选项", textAdvancedGroup: "高级选项", textAdvancedHiddenBadge: "▸ +%d 高级", textAdvancedShownBadge: "▾ 折叠高级",
+		textAllOptions: "全部选项", textAdvancedGroup: "高级选项", textAdvancedHiddenBadge: "▸ +%d 高级", textAdvancedShownBadge: "▾ 折叠高级",
 		textShowAdvancedRow: "▸ 展开高级选项（已折叠 %d 项 · 点击 / Enter / a）", textHideAdvancedRow: "▾ 折叠高级选项（共 %d 项 · 点击 / Enter / a）",
 	},
 }

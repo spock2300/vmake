@@ -130,8 +130,7 @@ func (m *Model) fillNormal(s *screen) {
 	s.optionsW = m.optionsPanelWidth()
 	s.optionsContentW = m.optionsContentWidth()
 	s.optionsLeft = s.treeW + optionStyle.GetBorderLeftSize()
-	s.languageSelector = m.languageSelectorRect()
-	s.advancedToggle = m.advancedToggleRect()
+	s.advancedToggle, s.languageSelector = m.headerControlRects()
 	var rightCol string
 	var opt optionLayout
 	if egoInner := m.egoGraphInnerHeight(s.contentH); egoInner > 0 {
@@ -460,7 +459,6 @@ func (m *Model) optionLayout(contentH int) optionLayout {
 				}
 				break
 			}
-			// Drop secondary badges before dropping the interactive advanced toggle.
 			if advBtn != "" && len(badges) > 1 {
 				badges = badges[1:]
 				continue
@@ -752,31 +750,23 @@ func (m *Model) headerSelector() headerMetrics {
 	}
 }
 
-func (m *Model) advancedToggleRect() dialogRect {
+func (m *Model) headerControlRects() (advanced, language dialogRect) {
 	hm := m.headerSelector()
-	if hm.advToggle == "" {
-		return dialogRect{}
-	}
-	return dialogRect{
-		x:      hm.style.GetBorderLeftSize() + hm.style.GetPaddingLeft() + hm.leftW + 2,
-		y:      hm.style.GetBorderTopSize() + hm.style.GetPaddingTop(),
-		width:  lipgloss.Width(hm.advToggle),
-		height: 1,
-	}
-}
-
-func (m *Model) languageSelectorRect() dialogRect {
-	hm := m.headerSelector()
-	offset := 0
+	baseX := hm.style.GetBorderLeftSize() + hm.style.GetPaddingLeft() + hm.leftW + 2
+	baseY := hm.style.GetBorderTopSize() + hm.style.GetPaddingTop()
+	langOffset := 0
 	if hm.advToggle != "" {
-		offset = lipgloss.Width(hm.advToggle) + 1
+		w := lipgloss.Width(hm.advToggle)
+		advanced = dialogRect{x: baseX, y: baseY, width: w, height: 1}
+		langOffset = w + 1
 	}
-	return dialogRect{
-		x:      hm.style.GetBorderLeftSize() + hm.style.GetPaddingLeft() + hm.leftW + 2 + offset,
-		y:      hm.style.GetBorderTopSize() + hm.style.GetPaddingTop(),
+	language = dialogRect{
+		x:      baseX + langOffset,
+		y:      baseY,
 		width:  lipgloss.Width(hm.langSelector),
 		height: 1,
 	}
+	return advanced, language
 }
 
 func (s screen) optionRowAt(x, y int) (int, bool) {

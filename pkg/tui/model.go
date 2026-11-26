@@ -965,20 +965,43 @@ func (m *Model) presetOptions() []string {
 	return entries[0].Presets()
 }
 
-func (m *Model) totalOptRows() int {
+type optionRowLayout struct {
+	visible       []OptionItem
+	advToggleIdx  int
+	presetIdx     int
+	menuconfigIdx int
+	total         int
+}
+
+func (m *Model) optionRowIndices() optionRowLayout {
 	visible := m.visibleOptions()
-	n := len(visible)
+	idx := len(visible)
+	advToggleIdx := -1
 	if m.hasAdvancedToggleRow() {
-		n++
+		advToggleIdx = idx
+		idx++
 	}
+	presetIdx := -1
+	menuconfigIdx := -1
 	if m.hasKConfig() {
 		if m.hasPresets() {
-			n += 2
-		} else {
-			n++
+			presetIdx = idx
+			idx++
 		}
+		menuconfigIdx = idx
+		idx++
 	}
-	return n
+	return optionRowLayout{
+		visible:       visible,
+		advToggleIdx:  advToggleIdx,
+		presetIdx:     presetIdx,
+		menuconfigIdx: menuconfigIdx,
+		total:         idx,
+	}
+}
+
+func (m *Model) totalOptRows() int {
+	return m.optionRowIndices().total
 }
 
 func (m *Model) ensureTreeCursorVisible() {

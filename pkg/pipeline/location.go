@@ -7,6 +7,8 @@ import (
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
@@ -140,7 +142,44 @@ func packageTreeRoot(ctx *RuntimeContext, name string, node *resolver.PackageNod
 	return ctx.packageLocation(name, node).TreeRoot
 }
 
-func managedThirdPartyRoot(sourceMgr *repo.SourceManager, name string) (string, bool) {
+func resolveExportedMemberRelPath(projectDir, ownerRoot, containerID, member string) string {
+	var dirs []string
+	if projectDir != "" {
+		if local, err := config.LoadLocal(projectDir); err == nil && local != nil {
+			if linked := strings.TrimSpace(local.Links[containerID]); linked != "" {
+				if !filepath.IsAbs(linked) {
+					linked = filepath.Join(projectDir, linked)
+				}
+				dirs = append(dirs, linked)
+			}
+		}
+		if manifest, _, err := buildscript.LoadManifest(projectDir); err == nil && manifest != nil {
+			if spec, ok := manifest.Modules[containerID]; ok && strings.TrimSpace(spec.Path) != "" {
+				p := filepath.FromSlash(strings.TrimSpace(spec.Path))
+				if !filepath.IsAbs(p) {
+					p = filepath.Join(projectDir, p)
+				}
+				dirs = append(dirs, p)
+			}
+		}
+	}
+	if ownerRoot != "" {
+		dirs = append(dirs, filepath.Join(ownerRoot, "src"))
+	}
+	for _, dir := range dirs {
+		manifest, _, err := buildscript.LoadManifest(dir)
+		if err != nil || manifest == nil || !manifest.HasExports() {
+			continue
+		}
+		if rel, ok := manifest.ResolveExport(member); ok && rel != "" {
+			return rel
+		}
+		break
+	}
+	return member
+}
+
+func managedThirdPartyRoot(sourceMgr *repo.SourceManager, projectDir, name string) (string, bool) {
 	repoName, rest, ok := api.SplitPackageRef(name)
 	if !ok {
 		return "", false
@@ -150,7 +189,8 @@ func managedThirdPartyRoot(sourceMgr *repo.SourceManager, name string) (string, 
 		return "", false
 	}
 	ownerRoot := sourceMgr.TreeDir(repo.PackageTreeKey(repoName, mod))
-	return filepath.Join(ownerRoot, "third_party", build.MemberDir(member)), true
+	resolvedMember := resolveExportedMemberRelPath(projectDir, ownerRoot, repoName+"/"+mod, member)
+	return filepath.Join(ownerRoot, "third_party", build.MemberDir(resolvedMember)), true
 }
 
 func CleanLinkedMaterializedSource(sourceMgr *repo.SourceManager, projectDir, name string) error {
@@ -165,7 +205,7 @@ func CleanLinkedMaterializedSource(sourceMgr *repo.SourceManager, projectDir, na
 		}
 		return sourceMgr.CleanMaterializedSource("", build.MemberDir(rel))
 	}
-	if thirdPartyRoot, ok := managedThirdPartyRoot(sourceMgr, name); ok {
+	if thirdPartyRoot, ok := managedThirdPartyRoot(sourceMgr, projectDir, name); ok {
 		return sourceMgr.CleanMaterializedSourceAt(thirdPartyRoot)
 	}
 	repoName, rest, ok := api.SplitPackageRef(name)

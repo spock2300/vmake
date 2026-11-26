@@ -97,7 +97,6 @@ const (
 	textGroupPackages      textID = "group_packages"
 	textGroupSummaryCount  textID = "group_summary_count"
 	textGroupHint          textID = "group_hint"
-	textAdvanced            textID = "advanced"
 	textAllOptions          textID = "all_options"
 	textAdvancedGroup       textID = "advanced_group"
 	textAdvancedHiddenBadge textID = "advanced_hidden_badge"

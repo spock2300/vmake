@@ -148,6 +148,14 @@ func (nativeContainerAdapter) loadPackageSource(_ *Resolver, container *Containe
 		}
 		return nil, fmt.Errorf("find %s in container %s: %w", pkgID, container.ID, err)
 	}
+	if origin == api.SourceRemote {
+		if _, escaped, err := resolveContainedDir(container.Dir, src.Dir); err != nil || escaped {
+			return nil, fmt.Errorf("package %s directory escapes container %s", pkgID, container.ID)
+		}
+		if _, escaped, err := resolveContainedPath(container.Dir, src.Path); err != nil || escaped {
+			return nil, fmt.Errorf("package %s build.go escapes container %s", pkgID, container.ID)
+		}
+	}
 	src.Name = pkgID
 	src.Repo = container.Repo
 	src.RepoURL = container.RepoURL

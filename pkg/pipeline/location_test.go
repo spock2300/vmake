@@ -1,12 +1,15 @@
 package pipeline
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
 	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
+	"github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
 
@@ -115,4 +118,54 @@ func TestPackageLocationMatrix(t *testing.T) {
 			t.Fatalf("registry loc = %+v", loc)
 		}
 	})
+}
+
+func TestCleanLinkedMaterializedSourceResolvesExportAlias(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "consumer")
+	sdkDir := filepath.Join(root, "sdk")
+	depsDir := filepath.Join(projectDir, ".vmake_deps")
+	cacheDir := filepath.Join(root, "cache")
+
+	if err := os.MkdirAll(sdkDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sdkDir, "vmake.json"), []byte(`{"exports":{"lvgl":"//system/freertos/lvgl"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	localCfg := &config.LocalConfig{Links: map[string]string{"org/sdk": sdkDir}}
+	if err := config.SaveLocal(projectDir, localCfg); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceMgr := repo.NewSourceManager(depsDir, cacheDir)
+	realTree := filepath.Join(sourceMgr.TreeDir(repo.PackageTreeKey("org", "sdk")), "third_party", build.MemberDir("system/freertos/lvgl"))
+	if err := os.MkdirAll(filepath.Join(realTree, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realTree, "src", "lv.c"), []byte("int lv;\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CleanLinkedMaterializedSource(sourceMgr, projectDir, "org/sdk/lvgl"); err != nil {
+		t.Fatalf("CleanLinkedMaterializedSource: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(realTree, "src")); !os.IsNotExist(err) {
+		t.Fatalf("expected aliased exported SetGit src dir %s to be removed, stat err = %v", filepath.Join(realTree, "src"), err)
+	}
+}
+
+func TestIssueForMapsExportVisibilityError(t *testing.T) {
+	got := IssueFor(&resolver.ExportVisibilityError{
+		From:      "//app",
+		To:        "org/sdk/internal/priv",
+		Container: "org/sdk",
+		Exported:  []string{"core"},
+	})
+	if got.Kind != build.IssueKindInternalVisibility {
+		t.Fatalf("IssueFor(ExportVisibilityError).Kind = %q, want %q", got.Kind, build.IssueKindInternalVisibility)
+	}
 }

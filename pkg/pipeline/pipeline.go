@@ -309,8 +309,12 @@ func newConfigLookup(ctx *RuntimeContext, currentPkg string, base map[string]any
 			opt = implicitPlatformOption(name)
 		}
 		if opt == nil {
+			crossContainer := currentPkg != "" && packageContainerID(ctx, currentPkg) != packageContainerID(ctx, pkg)
 			names := make([]string, 0, len(opts)+len(ctx.globalOptions))
-			for optionName := range opts {
+			for optionName, candidate := range opts {
+				if crossContainer && candidate != nil && candidate.IsInternal() {
+					continue
+				}
 				names = append(names, optionName)
 			}
 			for optionName, gOpt := range ctx.globalOptions {

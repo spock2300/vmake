@@ -77,7 +77,8 @@ func (m *Model) handleDescriptionMouse(msg tea.MouseMsg, s screen) (tea.Model, t
 }
 
 func (m *Model) optionRows() ([]optionRow, int, int) {
-	visible := m.visibleOptions()
+	layout := m.optionRowIndices()
+	visible := layout.visible
 	nameWidth, valWidth := 0, 0
 	for _, item := range visible {
 		if w := lipgloss.Width(item.Name); w > nameWidth {
@@ -98,29 +99,23 @@ func (m *Model) optionRows() ([]optionRow, int, int) {
 	}
 	valWidth = min(valWidth, maxValW)
 
-	rows := make([]optionRow, 0, len(visible)+3)
-	navIdx := 0
+	rows := make([]optionRow, 0, layout.total+2)
 	group := ""
-	for _, item := range visible {
+	for i, item := range visible {
 		if item.Group != group {
 			group = item.Group
 			rows = append(rows, optionRow{kind: rowGroup, navIdx: -1, text: group})
 		}
-		rows = append(rows, optionRow{kind: rowOption, navIdx: navIdx, item: item})
-		navIdx++
+		rows = append(rows, optionRow{kind: rowOption, navIdx: i, item: item})
 	}
-
-	if m.hasAdvancedToggleRow() {
-		rows = append(rows, optionRow{kind: rowAdvancedToggle, navIdx: navIdx})
-		navIdx++
+	if layout.advToggleIdx >= 0 {
+		rows = append(rows, optionRow{kind: rowAdvancedToggle, navIdx: layout.advToggleIdx})
 	}
-
-	if m.hasKConfig() {
-		if m.hasPresets() {
-			rows = append(rows, optionRow{kind: rowPreset, navIdx: navIdx})
-			navIdx++
-		}
-		rows = append(rows, optionRow{kind: rowMenuconfig, navIdx: navIdx})
+	if layout.presetIdx >= 0 {
+		rows = append(rows, optionRow{kind: rowPreset, navIdx: layout.presetIdx})
+	}
+	if layout.menuconfigIdx >= 0 {
+		rows = append(rows, optionRow{kind: rowMenuconfig, navIdx: layout.menuconfigIdx})
 	}
 	return rows, nameWidth, valWidth
 }

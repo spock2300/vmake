@@ -7,6 +7,7 @@ import (
 	"github.com/spock2300/vmake/internal/pkgvis"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/resolver"
 )
 
 type PackageEdge = build.PackageEdge
@@ -19,12 +20,13 @@ func IssueFor(err error) GraphIssue {
 	kind := build.IssueKindResolve
 	var resolveErr *build.ResolveError
 	var internalErr *pkgvis.InternalUseError
+	var exportErr *resolver.ExportVisibilityError
 	switch {
 	case errors.As(err, &resolveErr):
 		kind = resolveErr.Kind
 	case errors.Is(err, issue.ErrCircularDependency):
 		kind = build.IssueKindPackageCycle
-	case errors.As(err, &internalErr):
+	case errors.As(err, &internalErr), errors.As(err, &exportErr):
 		kind = build.IssueKindInternalVisibility
 	}
 	return GraphIssue{Severity: "error", Kind: kind, Message: err.Error()}

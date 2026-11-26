@@ -663,22 +663,11 @@ func (m *Model) selectCurrentNode() {
 }
 
 func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	visible := m.visibleOptions()
-	advToggleIdx := -1
-	nextIdx := len(visible)
-	if m.hasAdvancedToggleRow() {
-		advToggleIdx = nextIdx
-		nextIdx++
-	}
-	presetIdx := nextIdx
-
-	menuconfigIdx := -1
-	if m.hasKConfig() {
-		menuconfigIdx = presetIdx
-		if m.hasPresets() {
-			menuconfigIdx = presetIdx + 1
-		}
-	}
+	layout := m.optionRowIndices()
+	visible := layout.visible
+	advToggleIdx := layout.advToggleIdx
+	presetIdx := layout.presetIdx
+	menuconfigIdx := layout.menuconfigIdx
 
 	if advToggleIdx >= 0 && m.optCursor == advToggleIdx && (msg.String() == "enter" || msg.String() == " ") {
 		m.toggleAdvanced()
@@ -736,7 +725,7 @@ func (m *Model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleOptionAction(visible []OptionItem, presetIdx int, reverse bool, key string) {
-	if m.optCursor >= presetIdx && m.hasPresets() && m.optCursor == presetIdx {
+	if presetIdx >= 0 && m.optCursor == presetIdx {
 		presets := m.presetOptions()
 		if len(presets) > 1 {
 			current := m.currentPreset()
@@ -1380,12 +1369,18 @@ func (m *Model) renderFooterWithin(maxHeight int) string {
 		)
 		helpText = renderHelpEntries(entries)
 	} else {
-		helpText = renderHelpEntries([]helpEntry{
+		entries := []helpEntry{
 			{"↑↓", m.text(textNavigate)}, {"←→", m.text(textCycleValue)}, {"Space/Enter", m.text(textEdit)},
 			{"[]", m.text(textStepDeps)}, {"{}", m.text(textCycleEdges)}, {"r", m.text(textReset)}, {"R", m.text(textDefault)},
-			{"a", m.text(textAllOptions)}, {"?", m.text(textDetail)}, {"D", m.text(textDescriptionEdit)},
-			{"Tab", m.text(textPackages)}, {"Ctrl+S", m.text(textSave)}, {"Esc", m.text(textBack)},
-		})
+		}
+		if m.projectHasAdvancedOptions() {
+			entries = append(entries, helpEntry{"a", m.text(textAllOptions)})
+		}
+		entries = append(entries,
+			helpEntry{"?", m.text(textDetail)}, helpEntry{"D", m.text(textDescriptionEdit)},
+			helpEntry{"Tab", m.text(textPackages)}, helpEntry{"Ctrl+S", m.text(textSave)}, helpEntry{"Esc", m.text(textBack)},
+		)
+		helpText = renderHelpEntries(entries)
 	}
 
 	if m.ed().HasChanges() {

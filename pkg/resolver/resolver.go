@@ -668,14 +668,7 @@ func (r *Resolver) resolveDepTarget(callerID string, callerContainer *ContainerN
 	return depContainer, rawRef, relPath, nil, nil
 }
 
-func resolveContainedDir(rootDir, targetPath string) (string, bool, error) {
-	info, err := os.Stat(targetPath)
-	if err != nil || !info.IsDir() {
-		if err == nil {
-			err = fmt.Errorf("%s is not a directory", targetPath)
-		}
-		return "", false, err
-	}
+func resolveContainedPath(rootDir, targetPath string) (string, bool, error) {
 	realRoot := filepath.Clean(rootDir)
 	if resolved, err := filepath.EvalSymlinks(rootDir); err == nil {
 		realRoot = filepath.Clean(resolved)
@@ -690,6 +683,17 @@ func resolveContainedDir(rootDir, targetPath string) (string, bool, error) {
 		return realTarget, true, nil
 	}
 	return realTarget, false, nil
+}
+
+func resolveContainedDir(rootDir, targetPath string) (string, bool, error) {
+	info, err := os.Stat(targetPath)
+	if err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("%s is not a directory", targetPath)
+		}
+		return "", false, err
+	}
+	return resolveContainedPath(rootDir, targetPath)
 }
 
 func (r *Resolver) ensureLocalPathContainer(callerContainer *ContainerNode, containerID, relDir string) (*ContainerNode, error) {
@@ -711,7 +715,8 @@ func (r *Resolver) ensureLocalPathContainer(callerContainer *ContainerNode, cont
 	if err != nil {
 		return nil, fmt.Errorf("local path container %s directory %s not found", containerID, rawAbs)
 	}
-	if !callerContainer.IsLocal() && escaped {
+	declaredByRemote := !callerContainer.IsLocal() && (!callerContainer.IsLocalPath() || callerContainer.DeclaredByRemote)
+	if declaredByRemote && escaped {
 		return nil, fmt.Errorf("container %s path %q escapes parent container %s", containerID, relDir, callerContainer.ID)
 	}
 	if c, exists := r.graph.Containers[containerID]; exists {
@@ -731,7 +736,6 @@ func (r *Resolver) ensureLocalPathContainer(callerContainer *ContainerNode, cont
 	if err != nil || commit == "" {
 		commit = "local-path"
 	}
-	declaredByRemote := !callerContainer.IsLocal() && (!callerContainer.IsLocalPath() || callerContainer.DeclaredByRemote)
 	repoURL := ""
 	if declaredByRemote {
 		repoName = callerContainer.Repo
