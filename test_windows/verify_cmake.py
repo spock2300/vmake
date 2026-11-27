@@ -194,7 +194,12 @@ func Main(p *api.Package) {
     archive = install / "lib/libprobe.a"
     check_archive(archive, arm)
     published = package / "libprobe.a"
-    assert published.is_symlink() and published.resolve() == archive.resolve(), published
+    if os.name == "nt":
+        assert published.is_file() and not published.is_symlink(), published
+        assert not published.samefile(archive), published
+        assert published.read_bytes() == archive.read_bytes(), published
+    else:
+        assert published.is_symlink() and published.resolve() == archive.resolve(), published
     assert (install / "include/value.h").is_file()
     assert (project / "install/lib/libprobe.a").is_file()
     stamp_data = json.loads((build / ".vmake_configure.json").read_text(encoding="utf-8"))
@@ -231,6 +236,7 @@ func Main(p *api.Package) {
     (source / "value.h").write_text("#define PROBE_VALUE 11\n", encoding="utf-8")
     run(build_command, project)
     assert archive.read_bytes() != before, "changed CMake input did not rebuild archive"
+    assert published.read_bytes() == archive.read_bytes(), "published archive is stale"
     assert configure_count(build) == configure_runs, "source-only change reran configure"
     assert cache.stat().st_mtime_ns == cache_stamp, "source-only change reran configure"
     assert "11" in (install / "include/value.h").read_text()

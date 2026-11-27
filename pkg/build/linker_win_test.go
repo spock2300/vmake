@@ -33,7 +33,7 @@ func TestLinkSharedWindowsEmitsImportLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sharedCommand: %v", err)
 	}
-	if err := l.execute(cmd, output, dir, false); err != nil {
+	if err := l.execute(t.Context(), cmd, output, dir, false); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if !slices.Contains(*got, "-Wl,--out-implib="+output+".a") {
@@ -50,7 +50,7 @@ func TestLinkSharedLinuxOmitsImportLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sharedCommand: %v", err)
 	}
-	if err := l.execute(cmd, output, dir, false); err != nil {
+	if err := l.execute(t.Context(), cmd, output, dir, false); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	for _, arg := range *got {

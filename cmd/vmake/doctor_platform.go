@@ -26,9 +26,9 @@ func checkPlatform(tc *toolchain.Toolchain) []doctorFinding {
 		})
 	} else {
 		findings = append(findings, doctorFinding{
-			Severity: "error",
+			Severity: "warn",
 			Category: "symlink",
-			Message:  "cannot create symbolic links; " + fs.SymlinkHint,
+			Message:  "could not create a symbolic link in the temporary directory (optional capability for operations that create links)",
 		})
 	}
 

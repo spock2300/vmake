@@ -3,8 +3,10 @@ package build
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/scriptcall"
@@ -42,17 +44,23 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 	if err != nil {
 		return false, err
 	}
+	prebuilt := target.Prebuilt() != ""
+	if prebuilt && runtime.GOOS == "windows" {
+		// A generator can replace the bytes while preserving size and mtime.
+		// Windows has no change-time key in the per-scheduler hash cache.
+		s.hashes.evict(action.WorkDir, action.Commands[0].Args[:1])
+	}
 	upToDate, _, err := s.runPlannedAction(s.ctx, action, func(ctx context.Context) ([]string, error) {
 		if s.stats != nil {
 			s.stats.RecordLink(resolved.Node.FullName)
 		}
-		if resolved.Node.Target.Prebuilt() != "" {
-			if err := s.realizePrebuilt(resolved); err != nil {
+		if prebuilt {
+			if err := realizePrebuilt(action.WorkDir, action.Commands[0]); err != nil {
 				return nil, err
 			}
 		} else {
 			vlog.Info("  LINK %s", filepath.Base(resolved.OutputPath))
-			if err := s.linker.execute(action.Commands[0], resolved.OutputPath, pkgInfo.SourceDir, resolved.Node.Target.Kind() == api.TargetStatic); err != nil {
+			if err := s.linker.execute(ctx, action.Commands[0], resolved.OutputPath, pkgInfo.SourceDir, resolved.Node.Target.Kind() == api.TargetStatic); err != nil {
 				return nil, err
 			}
 		}
@@ -154,32 +162,63 @@ func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *P
 	return err
 }
 
-func (s *Scheduler) realizePrebuilt(resolved *ResolvedTarget) error {
-	src := resolved.Node.Target.Prebuilt()
-	pkgInfo := s.pkgs[resolved.Node.PkgName]
-	workDir := pkgInfo.SourceDir
-	absDst := resolveWorkPath(workDir, resolved.OutputPath)
-	absSrc := pkgInfo.ResolvePath(src)
-
-	if _, err := os.Stat(absSrc); err != nil {
-		return fmt.Errorf("prebuilt file not found: %s: %w", absSrc, err)
+func realizePrebuilt(workDir string, cmd commandSpec) error {
+	src := cmd.Args[0] // already resolved by planLink
+	dst := resolveWorkPath(workDir, cmd.Args[1])
+	if rel, err := filepath.Rel(src, dst); err == nil && rel == "." {
+		return fmt.Errorf("prebuilt source and output must differ: %s", src)
 	}
-
-	vlog.Info("  PREBUILT %s", filepath.Base(absDst))
-	if filepath.Clean(absSrc) == filepath.Clean(absDst) {
-		return fmt.Errorf("prebuilt source and output must differ: %s", absSrc)
+	info, err := statRegularFile(src)
+	if err != nil {
+		return fmt.Errorf("prebuilt source %s: %w", src, err)
 	}
-	if err := os.Remove(absDst); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if len(resolved.Node.Target.PostLinkSteps()) == 0 {
-		srcPath, err := filepath.Abs(absSrc)
+	vlog.Info("  PREBUILT %s", filepath.Base(dst))
+	switch cmd.Program {
+	case "symlink":
+		absolute, err := filepath.Abs(src)
 		if err != nil {
 			return err
 		}
-		return fs.EnsureSymlink(absDst, srcPath)
+		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return fs.EnsureSymlink(dst, absolute)
+	case "copy":
+		return copyPrebuilt(src, dst, info.Mode())
+	default:
+		return fmt.Errorf("unknown prebuilt operation %q", cmd.Program)
 	}
-	return CopyFile(absSrc, absDst)
+}
+
+// Publish only a complete copy. Renaming the staged file also replaces an old
+// symlink itself without opening or modifying its target.
+func copyPrebuilt(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	staged, err := os.CreateTemp(filepath.Dir(dst), ".prebuilt-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := staged.Name()
+	defer os.Remove(name)
+	if runtime.GOOS == "windows" {
+		mode |= 0200 // A generated output must remain replaceable on Windows.
+	}
+	_, err = io.Copy(staged, in)
+	if err == nil {
+		err = staged.Chmod(mode)
+	}
+	closeErr := staged.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return fs.RenameRetry(name, dst)
 }
 
 func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) (err error) {

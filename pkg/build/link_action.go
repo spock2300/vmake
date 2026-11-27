@@ -42,12 +42,14 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 	if target.Prebuilt() != "" {
 		source := info.ResolvePath(target.Prebuilt())
 		action.Inputs = append(action.Inputs, source)
-		if buildProductPath(info, workDir, source) {
-			action.StatInputs = append(action.StatInputs, source)
-		}
 		operation := "copy"
-		if len(target.PostLinkSteps()) == 0 {
-			operation = "symlink"
+		if runtime.GOOS != "windows" {
+			if len(target.PostLinkSteps()) == 0 {
+				operation = "symlink"
+			}
+			if buildProductPath(info, workDir, source) {
+				action.StatInputs = append(action.StatInputs, source)
+			}
 		}
 		linkCommand = commandSpec{Program: operation, Args: []string{source, resolved.OutputPath}}
 	} else {

@@ -32,7 +32,7 @@ func TestResponseFileReuse(t *testing.T) {
 	if first.path == other.path {
 		t.Fatalf("different arguments share a path: %s", first.path)
 	}
-	if err := ensureResponseFile(first); err != nil {
+	if err := ensureResponseFile(t.Context(), first); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(first.path)
@@ -46,7 +46,7 @@ func TestResponseFileReuse(t *testing.T) {
 	if err := os.Chtimes(first.path, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureResponseFile(second); err != nil {
+	if err := ensureResponseFile(t.Context(), second); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(first.path)
@@ -67,7 +67,7 @@ func TestResponseFileRepairsTruncatedCache(t *testing.T) {
 	if err := os.WriteFile(file.path, []byte("short"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureResponseFile(file); err != nil {
+	if err := ensureResponseFile(t.Context(), file); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(file.path)
@@ -87,7 +87,7 @@ func TestResponseFileConcurrentEnsure(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if err := ensureResponseFile(file); err != nil {
+			if err := ensureResponseFile(t.Context(), file); err != nil {
 				t.Error(err)
 			}
 		}()
@@ -292,7 +292,7 @@ func TestHoistedArchiveRuns(t *testing.T) {
 	file := responseFileFor(filepath.Join(workDir, "state", "rsp"), command.Args)
 	command = commandSpec{Program: command.Program, Args: []string{"@" + commandPath(workDir, file.path)}, response: file}
 	linker := &Linker{arPath: ar, run: gnuRunner(nil)}
-	if err := linker.execute(command, "libx.a", workDir, true); err != nil {
+	if err := linker.execute(t.Context(), command, "libx.a", workDir, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "libx.a")); err != nil {
@@ -394,12 +394,12 @@ func containsArg(args []string, value string) bool {
 func BenchmarkResponseFileCacheHit(b *testing.B) {
 	dir := b.TempDir()
 	file := responseFileFor(dir, []string{"-Iinc", "-DVALUE=1"})
-	if err := ensureResponseFile(file); err != nil {
+	if err := ensureResponseFile(b.Context(), file); err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := ensureResponseFile(file); err != nil {
+		if err := ensureResponseFile(b.Context(), file); err != nil {
 			b.Fatal(err)
 		}
 	}

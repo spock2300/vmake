@@ -40,7 +40,7 @@ func TestLinkBinaryMachOForceLoadsArchives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("binaryCommand: %v", err)
 	}
-	if err := l.execute(cmd, output, dir, false); err != nil {
+	if err := l.execute(t.Context(), cmd, output, dir, false); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	args := *got
@@ -80,7 +80,7 @@ func TestLinkBinaryMachOForceLoadKeepsCommaPathsIntact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("binaryCommand: %v", err)
 	}
-	if err := l.execute(cmd, output, dir, false); err != nil {
+	if err := l.execute(t.Context(), cmd, output, dir, false); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	args := *got
@@ -102,7 +102,7 @@ func TestLinkBinaryMachOSkipsRPathsWithoutDylibs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("binaryCommand: %v", err)
 	}
-	if err := l.execute(cmd, output, dir, false); err != nil {
+	if err := l.execute(t.Context(), cmd, output, dir, false); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if strings.Contains(strings.Join(*got, " "), "-rpath") {
@@ -128,7 +128,7 @@ func TestLinkSharedMachOUsesDynamiclib(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sharedCommand: %v", err)
 	}
-	if err := l.execute(cmd, output, dir, false); err != nil {
+	if err := l.execute(t.Context(), cmd, output, dir, false); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	args := *got
@@ -164,7 +164,7 @@ func TestLinkSharedMachORPathsDylibDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sharedCommand: %v", err)
 	}
-	if err := l.execute(cmd, output, dir, false); err != nil {
+	if err := l.execute(t.Context(), cmd, output, dir, false); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	args := *got

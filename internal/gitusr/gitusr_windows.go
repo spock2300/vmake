@@ -25,8 +25,7 @@ func SetupProcessEnv() []string {
 		return nil
 	}
 
-	// vmake's layout is symlink-based, so coreutils 'ln -s' must create real
-	// symlinks rather than silently copying or emitting .lnk shortcuts.
+	// Scripts that explicitly run 'ln -s' expect a native symbolic link.
 	if os.Getenv("MSYS") == "" {
 		_ = os.Setenv("MSYS", "winsymlinks:nativestrict")
 	}

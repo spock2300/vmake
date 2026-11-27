@@ -1,6 +1,7 @@
 package build
 
 import (
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -16,6 +17,29 @@ func commandPathFor(hostOS, dir, path string) string {
 		}
 	}
 	return filepath.ToSlash(path)
+}
+
+// Windows GCC also uses the source spelling when resolving nested quoted
+// includes. A path starting with ".." components can exceed MAX_PATH before
+// they are collapsed even when the actual file path is short.
+func compileSourcePathFor(hostOS, dir, src string) (string, error) {
+	arg := commandPathFor(hostOS, dir, src)
+	if hostOS != "windows" {
+		return arg, nil
+	}
+	clean := filepath.Clean(arg)
+	if !filepath.IsAbs(clean) && clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return arg, nil
+	}
+	workDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve compiler working directory %s: %w", dir, err)
+	}
+	absolute := resolveWorkPath(workDir, clean)
+	if relative, err := filepath.Rel(workDir, absolute); err == nil && filepath.IsLocal(relative) {
+		return filepath.ToSlash(relative), nil
+	}
+	return filepath.ToSlash(absolute), nil
 }
 
 func commandPath(dir, path string) string {

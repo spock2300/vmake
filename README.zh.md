@@ -44,10 +44,10 @@ vmake 可在 Windows 上原生运行，并支持在 Windows 主机上进行 ARM 
    工具链的 `make` 程序。普通 C/C++ 构建，以及已有配置的自定义 menuconfig 程序，不需要
    默认 make；显式配置的 MAKE 仍会被校验。Git for Windows 既不带 C 编译器也不带 make。
 
-vmake 的存储布局依赖符号链接，而 Windows 仅在**开发者模式**（设置 → 系统 → 开发者选项）
-或管理员终端下允许创建。运行 `vmake doctor` 可检查以上全部前提：它会报告符号链接、
-Git 用户态工具、`make` 与所选 C 工具链的状态；使用 `vmake doctor --toolchain NAME`
-可诊断指定工具链；`vmake toolchain show <name>` 会打印每个工具解析后的绝对路径。
+运行 `vmake doctor` 可检查 Git 用户态工具、`make` 和所选 C 工具链。
+它还会报告当前账户能否创建符号链接。只有需要创建链接的操作才用到这项能力。
+例如，vmake 为本地包准备 `SetGit` 源码时，会将包内的 `src` 链接到受管源码目录。用 `vmake doctor --toolchain NAME`
+可诊断指定工具链。`vmake toolchain show <name>` 会打印每个工具解析后的绝对路径。
 编译器由所选工具链解析，不要把编译器目录加进 `PATH`。
 
 工具链描述要运行哪些程序，还可声明 `target_os`（裸机为 `none`）与 `target_triple`
@@ -379,7 +379,7 @@ vmake check-symbols [--strict]                        # 审计本地默认目标
 vmake cache list                                      # 列出共享 git 对象缓存
 vmake cache remove <url>                              # 删除单个缓存命名空间
 vmake init-editor [--local <path>] [--remove]         # 为 build.go 生成编辑器支持文件（go.mod）
-vmake doctor [--toolchain <name>]                      # 诊断平台前提与 build.go 模式
+vmake doctor [--toolchain <name>]                      # 诊断宿主环境能力与 build.go 模式
 vmake toolchain list                                  # 列出可用工具链
 vmake toolchain show [name]                           # 显示工具链详情与解析后的工具路径
 vmake manifest show <path>                            # 显示清单内容

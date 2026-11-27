@@ -22,7 +22,7 @@ func Main(p *api.Package) {
 func TestInspectionSessionRootsAreIndependent(t *testing.T) {
 	t.Setenv("VMAKE_CACHE", t.TempDir())
 	for _, name := range []string{"project-a", "project-b"} {
-		dir := filepath.Join(t.TempDir(), name)
+		dir := filepath.Join(canonicalTempDir(t), name)
 		writeSessionProject(t, dir, false)
 		root, err := resolveProjectRootFrom(dir, "")
 		if err != nil {

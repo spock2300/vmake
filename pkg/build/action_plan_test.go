@@ -98,7 +98,7 @@ func TestPlanCompileCommandsAreHashedAndExecuted(t *testing.T) {
 		writeFakeDepfile(t, filepath.Join(dir, plan.DepPath), src, "include/header.h")
 		return nil, nil
 	}
-	deps, err := compiler.executeCompilePlan(plan, src, "obj/main.o", dir)
+	deps, err := compiler.executeCompilePlan(t.Context(), plan, src, "obj/main.o", dir)
 	if err != nil {
 		t.Fatal(err)
 	}

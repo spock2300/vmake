@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/api"
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
@@ -363,24 +362,119 @@ func TestPrebuiltPostLinkFailurePreservesInputAndRetries(t *testing.T) {
 	}
 }
 
-func TestPrebuiltWithoutPostLinkRetainsSymlink(t *testing.T) {
-	if !fs.SymlinksSupported() {
-		t.Skip("symlinks unavailable")
+func TestPrebuiltPublication(t *testing.T) {
+	target := makeTargetWithDeps("prebuilt").SetKind(api.TargetStatic).SetPrebuilt("build/staging/original.a")
+	s, _ := newTestScheduler(t, makeTargets("p", target))
+	s.hashes = newFileHashCache()
+	s.stats = NewBuildStats()
+	s.platform = api.Platform{OS: "none", Triple: "arm-none-eabi"}
+	pkg := s.pkgs["p"]
+	src := pkg.ResolvePath(target.Prebuilt())
+	writeAssemblyFixture(t, pkg.SourceDir, target.Prebuilt(), "first")
+	output := PlacementFor(target, pkg, s.targetOS("p")).OutputPath
+	build := func() {
+		t.Helper()
+		if err := s.Build("p:prebuilt"); err != nil {
+			t.Fatal(err)
+		}
 	}
+	check := func(want string) {
+		t.Helper()
+		data, err := os.ReadFile(output)
+		if err != nil || string(data) != want {
+			t.Fatalf("published prebuilt = %q, want %q: %v", data, want, err)
+		}
+	}
+
+	build()
+	check("first")
+	first, err := os.Lstat(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		if !first.Mode().IsRegular() {
+			t.Fatalf("Windows prebuilt output mode = %v, want a regular file", first.Mode())
+		}
+	} else if first.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("Unix prebuilt output mode = %v, want a symlink", first.Mode())
+	}
+	build()
+	again, err := os.Lstat(output)
+	if err != nil || !os.SameFile(first, again) || !first.ModTime().Equal(again.ModTime()) || s.stats.Snapshot().Linked != 1 {
+		t.Fatalf("unchanged build republished %s: %v", output, err)
+	}
+
+	// CMake staging can produce different bytes with identical size and mtime.
+	original, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeAssemblyFixture(t, pkg.SourceDir, target.Prebuilt(), "other")
+	if err := os.Chtimes(src, original.ModTime(), original.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		check("first") // The published copy is independent.
+	}
+	build()
+	check("other")
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(src); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Build("p:prebuilt"); err == nil {
+			t.Fatal("missing source was accepted")
+		}
+		check("other")
+		writeAssemblyFixture(t, pkg.SourceDir, target.Prebuilt(), "retry")
+		build()
+		check("retry")
+	}
+}
+
+func TestPrebuiltCopyReplacesOldSymlink(t *testing.T) {
 	dir := t.TempDir()
-	writeAssemblyFixture(t, dir, "original", "original")
-	target := makeTargetWithDeps("prebuilt").SetKind(api.TargetStatic).SetPrebuilt("original")
-	s := nativeTestScheduler(t, dir, target)
-	if err := s.Build("p:prebuilt"); err != nil {
+	writeAssemblyFixture(t, dir, "new.a", "new")
+	writeAssemblyFixture(t, dir, "old.a", "old")
+	dst := filepath.Join(dir, "output.a")
+	if err := os.Symlink(filepath.Join(dir, "old.a"), dst); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("cannot create old privileged symlink for migration fixture: %v", err)
+		}
 		t.Fatal(err)
 	}
-	output := PlacementFor(s.graph.Nodes["p:prebuilt"].Target, s.pkgs[s.graph.Nodes["p:prebuilt"].PkgName], s.targetOS(s.graph.Nodes["p:prebuilt"].PkgName)).OutputPath
-	info, err := os.Lstat(output)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("prebuilt output is not a symlink: %v", err)
-	}
-	if err := s.Build("p:prebuilt"); err != nil {
+	cmd := commandSpec{Program: "copy", Args: []string{filepath.Join(dir, "new.a"), dst}}
+	if err := realizePrebuilt(dir, cmd); err != nil {
 		t.Fatal(err)
+	}
+	info, err := os.Lstat(dst)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("migration did not publish a regular file: %v", err)
+	}
+	for path, want := range map[string]string{dst: "new", filepath.Join(dir, "old.a"): "old"} {
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != want {
+			t.Fatalf("%s = %q, want %s: %v", path, data, want, err)
+		}
+	}
+}
+
+func TestPrebuiltCopyPublishFailureCleansStaging(t *testing.T) {
+	dir := t.TempDir()
+	writeAssemblyFixture(t, dir, "source.a", "new")
+	writeAssemblyFixture(t, dir, "output.a/existing", "previous")
+	cmd := commandSpec{Program: "copy", Args: []string{filepath.Join(dir, "source.a"), filepath.Join(dir, "output.a")}}
+	if err := realizePrebuilt(dir, cmd); err == nil {
+		t.Fatal("replacing a nonempty directory succeeded")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "output.a", "existing"))
+	if err != nil || string(data) != "previous" {
+		t.Fatalf("destination after failed replacement = %q: %v", data, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("staging file left behind: %v: %v", entries, err)
 	}
 }
 

@@ -21,6 +21,10 @@ func SymlinksSupported() bool {
 	return symlinkSupportOK
 }
 
+func Symlink(target, linkPath string) error {
+	return symlinkError(os.Symlink(target, linkPath))
+}
+
 func EnsureSymlink(linkPath, target string) error {
 	target = filepath.FromSlash(target)
 	targetPath := target
@@ -52,8 +56,8 @@ func EnsureSymlink(linkPath, target string) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect symlink %s: %w", linkPath, err)
 	}
-	if err := os.Symlink(target, linkPath); err != nil {
-		return symlinkError(err)
+	if err := Symlink(target, linkPath); err != nil {
+		return err
 	}
 	info, err = os.Lstat(linkPath)
 	if err != nil {

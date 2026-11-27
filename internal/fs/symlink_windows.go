@@ -3,6 +3,7 @@
 package fs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 )
 
 // SymlinkHint describes what to do when symbolic links are unavailable.
-const SymlinkHint = "enable Developer Mode (Settings > System > For developers) or run from an elevated shell"
+const SymlinkHint = "to create this symbolic link, enable Windows Developer Mode or ask your administrator for the Create symbolic links user right"
 
 func probeSymlinks() bool {
 	dir, err := os.MkdirTemp("", "vmake-symlink-probe")
@@ -27,6 +28,9 @@ func probeSymlinks() bool {
 }
 
 func symlinkError(err error) error {
+	if !errors.Is(err, syscall.ERROR_PRIVILEGE_NOT_HELD) {
+		return err
+	}
 	return fmt.Errorf("%w (%s)", err, SymlinkHint)
 }
 

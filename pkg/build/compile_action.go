@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -29,6 +30,10 @@ func (c *Compiler) planCompile(src, objPath string, opts *CompileOptions, workDi
 }
 
 func (c *Compiler) planCompileHost(hostOS, src, objPath string, opts *CompileOptions, workDir string) (compilePlan, error) {
+	sourceArg, err := compileSourcePathFor(hostOS, workDir, src)
+	if err != nil {
+		return compilePlan{}, err
+	}
 	commandOpts := *opts
 	commandOpts.clang = c.clangCC
 	plan := compilePlan{
@@ -39,7 +44,7 @@ func (c *Compiler) planCompileHost(hostOS, src, objPath string, opts *CompileOpt
 	compiler, flags := selectCompilerAndFlags(c.ccPath, c.cxxPath, commandOpts.CFlags, commandOpts.CxxFlags, &commandOpts)
 
 	if commandOpts.clang && plan.Asm {
-		asmSource := src
+		asmSource := sourceArg
 		if commandOpts.Language == "asm-cpp" {
 			intermediate := objPath + ".s"
 			ppDep := plan.DepPath + ".pp"
@@ -48,12 +53,12 @@ func (c *Compiler) planCompileHost(hostOS, src, objPath string, opts *CompileOpt
 			parts := compileArgParts{
 				prefix:  []string{"-E", "-x", "assembler-with-cpp", "-MMD", "-MP", "-MF", commandPathFor(hostOS, workDir, ppDep), "-MT", commandPathFor(hostOS, workDir, objPath), "-o", commandPathFor(hostOS, workDir, intermediate)},
 				options: appendCompileOptions(nil, &ppOpts, commandFlagsFor(hostOS, workDir, flags)),
-				suffix:  []string{commandPathFor(hostOS, workDir, src)},
+				suffix:  []string{sourceArg},
 			}
 			plan.Commands = append(plan.Commands, compileCommandForHost(hostOS, c.ccPath, parts, workDir, opts.rspDir))
 			plan.DepFiles = []string{ppDep}
 			plan.Intermediate = intermediate
-			asmSource = intermediate
+			asmSource = commandPathFor(hostOS, workDir, intermediate)
 		}
 
 		asmOpts := commandOpts
@@ -70,12 +75,12 @@ func (c *Compiler) planCompileHost(hostOS, src, objPath string, opts *CompileOpt
 		plan.Commands = append(plan.Commands, compileCommandForHost(hostOS, c.ccPath, compileArgPartsFor(hostOS, &asmOpts, objPath, asmSource, flags, asmDepPath, workDir), workDir, opts.rspDir))
 		plan.ValidateObject = true
 
-		plan.Display = commandSpec{Program: c.ccPath, Args: compileArgPartsFor(hostOS, &commandOpts, objPath, src, flags, "", workDir).args()}
+		plan.Display = commandSpec{Program: c.ccPath, Args: compileArgPartsFor(hostOS, &commandOpts, objPath, sourceArg, flags, "", workDir).args()}
 		return plan, nil
 	}
 
-	plan.Commands = []commandSpec{compileCommandForHost(hostOS, compiler, compileArgPartsFor(hostOS, &commandOpts, objPath, src, flags, plan.DepPath, workDir), workDir, opts.rspDir)}
-	plan.Display = commandSpec{Program: compiler, Args: compileArgPartsFor(hostOS, &commandOpts, objPath, src, flags, "", workDir).args()}
+	plan.Commands = []commandSpec{compileCommandForHost(hostOS, compiler, compileArgPartsFor(hostOS, &commandOpts, objPath, sourceArg, flags, plan.DepPath, workDir), workDir, opts.rspDir)}
+	plan.Display = commandSpec{Program: compiler, Args: compileArgPartsFor(hostOS, &commandOpts, objPath, sourceArg, flags, "", workDir).args()}
 
 	if plan.Asm {
 		plan.DepFiles = []string{plan.DepPath}
@@ -87,7 +92,7 @@ func (c *Compiler) planCompileHost(hostOS, src, objPath string, opts *CompileOpt
 	return plan, nil
 }
 
-func (c *Compiler) executeCompilePlan(plan compilePlan, src, objPath, workDir string) (deps []string, err error) {
+func (c *Compiler) executeCompilePlan(ctx context.Context, plan compilePlan, src, objPath, workDir string) (deps []string, err error) {
 	if err := fs.EnsureDir(filepath.Dir(resolveWorkPath(workDir, objPath))); err != nil {
 		return nil, err
 	}
@@ -101,7 +106,7 @@ func (c *Compiler) executeCompilePlan(plan compilePlan, src, objPath, workDir st
 	}()
 
 	for _, command := range plan.Commands {
-		if err := ensureResponseFile(command.response); err != nil {
+		if err := ensureResponseFile(ctx, command.response); err != nil {
 			return nil, err
 		}
 		if _, runErr := c.run(command.Program, workDir, command.Args...); runErr != nil {
@@ -124,10 +129,10 @@ func (c *Compiler) executeCompilePlan(plan compilePlan, src, objPath, workDir st
 	return deps, nil
 }
 
-func compileArgPartsFor(hostOS string, opts *CompileOptions, objPath, src string, flags []string, depPath, dir string) compileArgParts {
+func compileArgPartsFor(hostOS string, opts *CompileOptions, objPath, sourceArg string, flags []string, depPath, dir string) compileArgParts {
 	commandOpts := *opts
 	commandOpts.Includes = commandPathsFor(hostOS, dir, opts.Includes)
-	return buildCompileArgParts(&commandOpts, commandPathFor(hostOS, dir, objPath), commandPathFor(hostOS, dir, src), commandFlagsFor(hostOS, dir, flags), commandPathFor(hostOS, dir, depPath))
+	return buildCompileArgParts(&commandOpts, commandPathFor(hostOS, dir, objPath), sourceArg, commandFlagsFor(hostOS, dir, flags), commandPathFor(hostOS, dir, depPath))
 }
 
 func compileCommandForHost(hostOS, program string, parts compileArgParts, workDir, rspDir string) commandSpec {

@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 
 	"github.com/traefik/yaegi/interp"
+
+	internalfs "github.com/spock2300/vmake/internal/fs"
 )
 
 var (
@@ -181,7 +183,7 @@ func (s *ScriptFS) symlink(oldname, newname string) error {
 	if err := s.writeBlocked(newname); err != nil {
 		return err
 	}
-	return os.Symlink(oldname, s.resolve(newname))
+	return internalfs.Symlink(oldname, s.resolve(newname))
 }
 func (s *ScriptFS) readDir(name string) ([]os.DirEntry, error) { return os.ReadDir(s.resolve(name)) }
 

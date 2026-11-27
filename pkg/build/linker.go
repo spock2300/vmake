@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -309,9 +310,12 @@ func (l *Linker) objectCommand(objs []string, outputPath, workDir string) comman
 	return commandSpec{Program: l.ccPath, Args: append(args, commandPaths(workDir, objs)...)}
 }
 
-func (l *Linker) execute(command commandSpec, outputPath, workDir string, archive bool) error {
+func (l *Linker) execute(ctx context.Context, command commandSpec, outputPath, workDir string, archive bool) error {
 	absolute := resolveWorkPath(workDir, outputPath)
 	if err := fs.EnsureParentDir(absolute); err != nil {
+		return err
+	}
+	if err := ensureResponseFile(ctx, command.response); err != nil {
 		return err
 	}
 	if archive {
@@ -322,9 +326,6 @@ func (l *Linker) execute(command commandSpec, outputPath, workDir string, archiv
 		if err := os.Remove(absolute); err != nil {
 			return err
 		}
-	}
-	if err := ensureResponseFile(command.response); err != nil {
-		return err
 	}
 	_, err := l.run(command.Program, workDir, command.Args...)
 	return err

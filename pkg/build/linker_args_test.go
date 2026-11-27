@@ -28,7 +28,7 @@ func TestLinkBinaryELFArgv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("binaryCommand: %v", err)
 	}
-	if err := l.execute(cmd, "out/app", dir, false); err != nil {
+	if err := l.execute(t.Context(), cmd, "out/app", dir, false); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestLinkBinaryMachOArgv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("binaryCommand: %v", err)
 	}
-	if err := l.execute(cmd, output, dir, false); err != nil {
+	if err := l.execute(t.Context(), cmd, output, dir, false); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 

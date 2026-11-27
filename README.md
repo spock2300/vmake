@@ -48,10 +48,10 @@ vmake runs natively on Windows and supports Windows-hosted ARM bare-metal builds
    default make. An explicitly configured MAKE is still validated. Git for Windows
    supplies neither C compilers nor make.
 
-vmake's storage layout is built on symbolic links, which Windows only permits in
-**Developer Mode** (Settings → System → For developers) or from an elevated shell.
-Run `vmake doctor` to check all of the above; it reports the status of symlinks, the
-Git userland, `make` and the selected C toolchain. Use `vmake doctor --toolchain NAME`
+Run `vmake doctor` to check the Git userland, `make` and the selected C toolchain.
+It also reports whether the current account can create symbolic links. This capability
+is optional. For example, a local package with `SetGit` uses it to link its `src`
+directory to the managed checkout. Use `vmake doctor --toolchain NAME`
 to diagnose a specific toolchain. `vmake toolchain show NAME` prints each configured
 tool and its resolved absolute path. Compilers are resolved by the selected toolchain;
 do not add compiler directories to `PATH`.
@@ -399,7 +399,7 @@ vmake check-symbols [--strict]                        # Audit ELF dynamic symbol
 vmake cache list                                      # List cached upstream repositories
 vmake cache remove <url>                              # Remove one cache namespace
 vmake init-editor [--local <path>] [--remove]         # Generate editor support (go.mod) for build.go
-vmake doctor [--toolchain <name>]                      # Diagnose platform prerequisites and build.go patterns
+vmake doctor [--toolchain <name>]                      # Diagnose host capabilities and build.go patterns
 vmake toolchain list                                   # List available toolchains
 vmake toolchain show [name]                            # Show toolchain details and resolved tool paths
 vmake manifest show <path>                            # Show manifest contents

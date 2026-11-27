@@ -22,10 +22,9 @@ import (
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
-	Short: "Diagnose platform prerequisites and build.go patterns",
-	Long: `Reports the status of the platform prerequisites vmake depends on
-(symbolic links, the Git for Windows userland, make, the C toolchain) and
-scans build.go files in the current project for patterns that currently work
+	Short: "Diagnose host capabilities and build.go patterns",
+	Long: `Reports optional symbolic-link support, the Git for Windows userland, make,
+and the selected C toolchain. Scans build.go files in the current project for patterns that currently work
 but may become errors in future vmake versions:
 
   - [autoWire] Package uses OnRequire/AddRequires but its targets don't call

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/pkg/buildscript"
 	"github.com/spock2300/vmake/pkg/lockfile"
 	vlog "github.com/spock2300/vmake/pkg/log"
@@ -17,27 +18,12 @@ var (
 )
 
 func findProjectDir() string {
-	if cachedProjectDir != "" {
-		return cachedProjectDir
+	if cachedProjectDir == "" {
+		root, err := resolveProjectRoot()
+		fatalResolveRoot(err)
+		cachedProjectDir = root
 	}
-	if projectOverride != "" {
-		found := validateProjectDir(projectOverride)
-		cachedProjectDir = found
-		return found
-	}
-	dir, err := os.Getwd()
-	if err != nil {
-		fatalMsg("get working directory: %v", err)
-	}
-	if found, ok := searchProjectDir(dir); ok {
-		if projectOverride == "" {
-			rejectShadowedProjectRoot(found)
-		}
-		cachedProjectDir = found
-		return found
-	}
-	fatalUsage("not inside a vmake project (no vmake.json, .vmake/, build.go or */build.go found in %s or any parent directory)", dir)
-	return ""
+	return cachedProjectDir
 }
 
 func findProjectDirSoft() string {
@@ -52,32 +38,54 @@ func findProjectDirSoft() string {
 	if err != nil {
 		return ""
 	}
-	found, _ := searchProjectDir(dir)
-	return found
+	found, ok := searchProjectDir(canonicalOrSelf(dir))
+	if !ok {
+		return ""
+	}
+	return canonicalOrSelf(found)
 }
 
 var errNotInProject = errors.New("not inside a vmake project (no vmake.json, .vmake/, build.go or */build.go found in the current directory or any parent directory)")
 
 func resolveProjectRoot() (string, error) {
+	if projectOverride != "" {
+		return resolveProjectRootFrom("", projectOverride)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("get working directory: %w", err)
 	}
-	return resolveProjectRootFrom(cwd, projectOverride)
+	return resolveProjectRootFrom(cwd, "")
 }
 
 func resolveProjectRootFrom(start, override string) (string, error) {
 	if override != "" {
 		return validateProjectDirErr(override)
 	}
-	found, ok := searchProjectDir(start)
+	found, ok := searchProjectDir(canonicalOrSelf(start))
 	if !ok {
 		return "", errNotInProject
 	}
-	if err := shadowedProjectRootErr(found, override); err != nil {
+	// Package discovery uses physical paths. Give locks, build actions and the
+	// install manifest the same root even when entered via a Windows 8.3 alias.
+	found, err := fs.CanonicalPath(found)
+	if err != nil {
+		return "", err
+	}
+	if err := shadowedProjectRootErr(found, ""); err != nil {
 		return "", err
 	}
 	return found, nil
+}
+
+func canonicalOrSelf(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	if canonical, err := fs.CanonicalPath(path); err == nil {
+		return canonical
+	}
+	return path
 }
 
 // rejectShadowedProjectRoot fails when the resolved project root is a nested
@@ -116,22 +124,13 @@ func rejectShadowedProjectRootFromCWD() {
 	if err != nil {
 		return
 	}
-	if found, ok := searchProjectDir(dir); ok {
-		rejectShadowedProjectRoot(found)
+	if found, ok := searchProjectDir(canonicalOrSelf(dir)); ok {
+		rejectShadowedProjectRoot(canonicalOrSelf(found))
 	}
 }
 
-// validateProjectDir resolves and checks an explicit --project directory. The
+// validateProjectDirErr resolves and checks an explicit --project directory. The
 // path is relative to the process cwd; it must exist and look like a project.
-func validateProjectDir(override string) string {
-	dir, err := validateProjectDirErr(override)
-	if err != nil {
-		vlog.Error("%v", err)
-		exitWithError(err)
-	}
-	return dir
-}
-
 func validateProjectDirErr(override string) (string, error) {
 	dir, err := filepath.Abs(override)
 	if err != nil {
@@ -143,6 +142,10 @@ func validateProjectDirErr(override string) (string, error) {
 	}
 	if !info.IsDir() {
 		return "", &usageError{fmt.Errorf("--project path %q is not a directory", dir)}
+	}
+	dir, err = fs.CanonicalPath(dir)
+	if err != nil {
+		return "", err
 	}
 	if !hasProjectConfig(dir) && !hasManifest(dir) && !hasBuildGo(dir) && !hasChildBuildGo(dir) {
 		return "", &usageError{fmt.Errorf("--project %q is not a vmake project (no vmake.json, .vmake/, build.go or */build.go found)", dir)}
@@ -229,6 +232,7 @@ func findEnclosingProjectRoot(start string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	abs = canonicalOrSelf(abs)
 	parent := filepath.Dir(abs)
 	if parent == abs {
 		return "", false
@@ -243,11 +247,17 @@ func hasGitRoot(dir string) bool {
 
 func hasProjectConfig(dir string) bool {
 	marker := filepath.Join(dir, ".vmake")
-	if marker == vmakeDir {
+	if filepath.Clean(marker) == filepath.Clean(vmakeDir) {
 		return false
 	}
-	_, err := os.Stat(marker)
-	return err == nil
+	info, err := os.Stat(marker)
+	if err != nil {
+		return false
+	}
+	if globalInfo, err := os.Stat(vmakeDir); err == nil && os.SameFile(info, globalInfo) {
+		return false
+	}
+	return true
 }
 
 func hasManifest(dir string) bool {

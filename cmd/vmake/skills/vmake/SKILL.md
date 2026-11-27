@@ -146,7 +146,7 @@ If the compiler is missing, run `vmake toolchain list` first. A declared but uni
 
 - **Linux**: the built-in `host` toolchain uses `gcc`/`g++` from `PATH`; a clang-only host must declare a toolchain that names its clang executables.
 - **macOS**: the built-in `host` toolchain uses `cc`/`c++` and leaves `objcopy`/`objdump` unset; Kconfig/kernel/U-Boot builds need GNU Make 3.82+ and a toolchain whose `make` is `gmake` (`vmake doctor` warns below 3.82).
-- **Windows**: vmake storage needs real symlinks (Developer Mode or an elevated shell; no junctions); the full Git for Windows userland is required (MinGit is insufficient) and supplies neither a compiler nor make; use MinGW-w64 for native Windows and the ARM GNU Toolchain for bare metal (MSVC is out of scope); CMake helpers default to Ninja.
+- **Windows**: creating symbolic links is an optional capability used by operations such as linking a local `SetGit` source. Use the full Git for Windows userland (MinGit is insufficient). Git supplies neither a compiler nor make. Install MinGW-w64 for native Windows or the ARM GNU Toolchain for bare metal. MSVC is out of scope. CMake helpers default to Ninja.
 - `vmake doctor [--toolchain <name>]` checks symlinks, the Git userland on Windows, make, the selected toolchain, and whether the installed skill matches this binary (a stale copy is an error; reinstall with `vmake skill install`), but not CMake/Ninja; full host requirements: [references/platforms.md](references/platforms.md).
 - **Cross targets**: `target_os`/`target_triple` control artifacts and the compiler target; `vmake test` refuses cross targets and points to `vmake build --tests`.
 

@@ -8,9 +8,9 @@ AI 阅读此文档后，按顺序执行以下命令即可完成安装。
 - C/C++ 编译器（按平台准备）：
   - Linux：PATH 中的 GCC/G++（内置 `host` 工具链使用 `gcc`/`g++`；只有 clang 的机器需要声明自己的工具链）
   - macOS：Xcode Command Line Tools（提供 `cc`/`c++`），无需 GNU binutils
-  - Windows：原生构建使用 MinGW-w64，裸机构建使用 ARM GNU 工具链；此外还需要完整版 Git for Windows，并启用开发者模式（vmake 的存储布局依赖符号链接）
+  - Windows 上需安装完整版 Git for Windows。原生构建使用 MinGW-w64，裸机构建使用 ARM GNU 工具链。
 
-vmake 自己解析编译器路径。不要为了构建去 `export PATH`、`CC`、`CXX`、`AR` 或 `LD`：内置 `host` 只按上面的名字查找，交叉编译器或不在 PATH 的编译器应写进 `toolchain.json` 并用 `--toolchain` 选择。`vmake toolchain show <name>` 会打印解析后的绝对路径；`vmake doctor` 会检查工具链是否可用。
+vmake 自己解析编译器路径。不要为了构建去 `export PATH`、`CC`、`CXX`、`AR` 或 `LD`：内置 `host` 只按上面的名字查找，交叉编译器或不在 PATH 的编译器应写进 `toolchain.json` 并用 `--toolchain` 选择。`vmake toolchain show <name>` 会打印解析后的绝对路径；`vmake doctor` 会检查工具链，并单独报告可选的符号链接能力。如果只有这一项警告，可以继续安装。
 
 ## 安装步骤
 

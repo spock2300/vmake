@@ -51,7 +51,7 @@ Inspection and dry-run commands (`vmake inspect` without `--no-targets`, `vmake 
 | `p.Run(...)` / `p.RunIn(dir, ...)` | `BuildDir()` by default | `RunIn` selects the directory explicitly |
 | `p.Configure(...)` | configures `SrcDir()` out-of-source into `BuildDir()` | install prefix from `InstallDir()`; empty for local packages |
 | `CMakeConfigure` / `CMakeBuild` / `CMakeInstall` | `BuildDir()` (configure with `--preset` uses `SrcDir()`) | `CMakeBuildDir()`/`CMakeInstallDir()` are passed as `-B`/`--build`/`--install`/`--prefix` arguments; see CMake Directories |
-| `SetPrebuilt(path)` source | existing file at `path` (absolute or `SourceDir()`-relative) | output published at `BuildDir()/<TargetFilename>` (symlink, or copy with post-link steps) |
+| `SetPrebuilt(path)` source | existing file at `path` (absolute or `SourceDir()`-relative) | output published at `BuildDir()/<TargetFilename>` (copy on Windows hosts or with post-link steps, otherwise a symlink) |
 | Install / publish | remote `InstallDir()`; local `--prefix` (default `./install/`) | `InstallDir()` is empty for local packages |
 
 Within `SetBuildFunc`, built-in helpers (`CMakeConfigure`, `CMakeBuild`, `CMakeInstall`) automatically use the correct directories. If you need to read or patch source files manually, use `SrcDir()` to locate the downloaded source tree.

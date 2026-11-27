@@ -3,7 +3,7 @@ You are a strict rubric judge. Use only the installed `vmake` skill (load it wit
 The candidate answer is between `<<<ANSWER>>>` and `<<<END>>>`.
 
 PASS only if the answer states all of these vmake requirements:
-- Windows: real symbolic links are required (Developer Mode or elevated shell; no junctions); the full Git for Windows is required and MinGit is insufficient; the Git userland supplies neither a compiler nor make; MinGW-w64 is used for native Windows and the ARM GNU Toolchain for bare metal; MSVC is out of scope.
+- Windows: symbolic-link creation is optional and only required by operations that create links, such as linking a local `SetGit` checkout; the full Git for Windows is required and MinGit is insufficient; the Git userland supplies neither a compiler nor make; MinGW-w64 is used for native Windows and the ARM GNU Toolchain for bare metal; MSVC is out of scope.
 - macOS: `objcopy`/`objdump` are unset; Kconfig/kernel/U-Boot builds need GNU Make 3.82+ and a toolchain whose `make` is `gmake`. The scenario already has Xcode Command Line Tools, so restating `cc`/`c++` is optional; if the answer discusses the host compiler, it must say `cc`/`c++`.
 - The answer does not include general installation tutorials (for example `xcode-select --install`, `brew install make`, "install Ninja and put it on PATH") as the fix. Saying "not covered by the skill" for general installation details is acceptable.
 

@@ -78,7 +78,7 @@ Windows EXE 使用 `CGO_ENABLED=0` 交叉编译。Wine 下复跑 ARM 固件、�
 
 `.github/workflows/windows.yml` 使用固定版本及 SHA256 的官方 ARM 资产，安装所需 MinGW/MSYS 工具，关闭 CGO，运行单元测试和 ARM 验证，并排除子图测试。本轮没有触发远程 CI；Wine 结果不等同于 Windows 真机验收。
 
-Windows 仍需要开发者模式或软链接权限。长路径验收覆盖产物路径；启动外部进程的工作目录需保持在 Windows `MAX_PATH` 范围内，Wine 对超过该范围的工作目录也会启动失败。本轮验证了中文工程根目录，未扩展为任意 Unicode 源文件名或任意第三方工具的编码保证。
+本地包通过 `SetGit` 建立 `src` 链接时需要创建符号链接的权限。长路径验收覆盖产物路径；启动外部进程的工作目录需保持在 Windows `MAX_PATH` 范围内，Wine 对超过该范围的工作目录也会启动失败。本轮验证了中文工程根目录，未扩展为任意 Unicode 源文件名或任意第三方工具的编码保证。
 
 ## 构建性能（2026-11-18）
 
@@ -105,11 +105,13 @@ Windows 上 `vmake build` 的固定开销明显高于 Linux/macOS，CMake 第三
 
 Windows 上的放大因子（未在真机复测，供解读 Linux 数字）：`CreateProcess` 与 MinGW 工具启动、Defender 实时扫描、NTFS 元数据；同样的 I/O 在 Windows 上按经验通常是 Linux 的 3–10 倍。剩余且本轮未消除的固定成本：每次构建的 2 次 `<cc> --version` 与 8 个工具二进制的哈希（构建键需要）、`CMakeConfigure` 每次仍遍历 `SrcDir()` 收集指纹输入、Windows 上首次构建每 target（或每条链接/归档命令）写一次 response file（之后命中缓存，不再写删临时文件），以及真实编译/链接本身。
 
-Windows GNU 参数落盘的现状：编译把同一 target 中 flags 相同的 TU 共享的 `-I`/`-D`/flags 写入 `<buildDir>/state/rsp/rsp-<sha256[:16]>.rsp`，链接与归档把整条 argv 写入同一目录；命令行用 `@` 引用并按 `commandPath` 相对化，内容不变时不再重写（也不再创建临时文件），`clean`/`distclean` 随构建目录删除。改动后真机耗时用 `test_windows/bench_build.py` 复测并补充到本节。
+Windows GNU 参数落盘的现状：编译把同一 target 中 flags 相同的 TU 共享的 `-I`/`-D`/flags 写入 `<buildDir>/state/rsp/rsp-<sha256[:16]>.rsp`，链接与归档把整条 argv 写入同一目录；命令行用 `@` 引用并按 `commandPath` 相对化，缓存缺失或长度不完整时，各进程持有同目录旁的 `rsp.lock` 再次检查并发布。已发布的文件只读复用，`clean`/`distclean` 随构建目录删除。改动后真机耗时用 `test_windows/bench_build.py` 复测并补充到本节。
 
 排查建议：`vmake build -v` 中的 `cmake configure (cached): ...` 表示只剩本轮修复的固定开销；出现 `cmake configure: fingerprint changed for ...` 则是一次完整重配置，通常由 `PATH`/`CMAKE_*` 环境变化或新增 `.cmake` 输入引起，代价远高于哈希。Windows 真机上可用 `test_windows/bench_build.py` 对比修复前后，并把 JSON 附到本文。
 
 `python3 test_windows/verify_cmake.py ./vmake` 在 Linux 上全量通过（含 configure 计数 oracle）；`test_data/_snapshot` 的单 fixture 对比也保持一致。
+
+Windows GCC 编译工作目录以外的源文件时，vmake 将向上跨目录的源路径折叠为绝对路径。编译器据此查找多层相对引用的头文件。外部源的 `__FILE__` 和调试信息可能包含该绝对路径。
 
 ## Response file 缓存验证（2026-11-19，Wine）
 

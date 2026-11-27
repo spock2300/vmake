@@ -31,7 +31,7 @@ extension plugin commands appear here too. For plugin details, run
     `vmake deps update [pkg[@version|commit]...] [--dry-run --json --prune --refresh-repos]` - Re-resolve dependencies and rewrite vmake.lock
     `vmake deps why <pkg|pkg:target> [--all --json --locked --offline --set <value> -s]` - Explain why a package or target is needed by the root build
   `vmake distclean [--purge-sources]` - Deep clean all build artifacts
-  `vmake doctor [--config <value> -c --toolchain <value>]` - Diagnose platform prerequisites and build.go patterns
+  `vmake doctor [--config <value> -c --toolchain <value>]` - Diagnose host capabilities and build.go patterns
   `vmake ext` - Manage extension repositories
     `vmake ext add <name> <git-url>` - Add an extension repository
     `vmake ext list` - List extension repositories and plugins

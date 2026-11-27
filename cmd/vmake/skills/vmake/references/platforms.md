@@ -23,8 +23,11 @@ for resolution order and [dirs.md](dirs.md) for storage paths.
 
 ## Windows
 
-- vmake storage requires real symbolic links. Enable Developer Mode or use an
-  elevated shell; junctions are not supported.
+- A local package that uses `SetGit` needs a real symbolic link from its `src`
+  directory to the managed checkout. A build script may also request a symbolic
+  link explicitly. If Windows reports that the current account lacks the
+  privilege to create that link, vmake includes Developer Mode in the error
+  guidance. A symlink warning from `vmake doctor` alone allows setup to proceed.
 - vmake locates the full Git for Windows userland and prepends it to its own
   process `PATH`. MinGit does not include that userland.
 - Git for Windows supplies neither a C compiler nor make. Use MinGW-w64 for

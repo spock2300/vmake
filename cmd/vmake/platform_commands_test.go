@@ -11,6 +11,21 @@ import (
 	"github.com/spock2300/vmake/pkg/toolchain"
 )
 
+func TestDoctorReportsSymbolicLinksAsOptional(t *testing.T) {
+	for _, finding := range checkPlatform(nil) {
+		if finding.Category != "symlink" {
+			continue
+		}
+		if (finding.Severity != "ok" && finding.Severity != "warn") ||
+			(finding.Severity == "warn" && !strings.Contains(strings.ToLower(finding.Message), "optional")) ||
+			strings.Contains(strings.ToLower(finding.Message), "developer mode") {
+			t.Fatalf("general capability check: %+v", finding)
+		}
+		return
+	}
+	t.Fatal("missing symlink capability in doctor output")
+}
+
 func TestDoctorChecksSelectedToolsWithoutNativeGCC(t *testing.T) {
 	program, err := os.Executable()
 	if err != nil {

@@ -47,7 +47,7 @@ func fatalMsg(format string, args ...any) {
 func fatalResolveRoot(err error) {
 	if errors.Is(err, errNotInProject) {
 		cwd, _ := os.Getwd()
-		fatalUsage("not inside a vmake project (no .vmake/, build.go or */build.go found in %s or any parent directory)", cwd)
+		fatalUsage("not inside a vmake project (no vmake.json, .vmake/, build.go or */build.go found in %s or any parent directory)", cwd)
 	}
 	var usage *usageError
 	if errors.As(err, &usage) {

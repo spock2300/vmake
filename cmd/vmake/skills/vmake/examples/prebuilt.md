@@ -1,15 +1,14 @@
 # Prebuilt Libraries
 
 Exporting pre-compiled `.a`/`.so` files as vmake targets using `SetPrebuilt`.
-The scheduler points the expected output path at the prebuilt file — a symlink
-when the target has no post-link steps, a copy when it does — and downstream
-packages link against it through normal dependency resolution.
+The scheduler publishes a file copy on Windows hosts and whenever the target has
+post-link steps. Other hosts use a symlink for targets without post-link steps.
+Downstream packages link against the published file through normal dependency resolution.
 
 ## Prerequisites
 
 - The prebuilt file exists in the package (e.g. `drv/lib/libdrv.a`) before the first build.
 - The provider package is reachable: `ctx.AddRequires("drv")` in `OnRequire` plus `AddDeps("drv:drv")` on the consumer target (or `official/openssl` style for remote packages).
-- On Windows, real symlink support is required (Developer Mode or an elevated shell); VMake does not substitute junctions.
 
 ## Single Static Library
 
@@ -199,7 +198,7 @@ file is not found.
 
 ```bash
 vmake build
-# Expected: PREBUILT libdrv.a (symlink when the target has no post-link steps)
+# Expected: PREBUILT libdrv.a (file copy on Windows, symlink on Unix for this target)
 ls -l drv/build/*/libdrv.a   # -> /abs/path/drv/lib/libdrv.a (absolute symlink target)
 vmake build                  # second run prints no PREBUILT line (record matches)
 ```

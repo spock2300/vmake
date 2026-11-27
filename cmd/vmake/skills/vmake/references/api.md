@@ -304,7 +304,7 @@ All setters are fluent (return `*Target`).
 | `SetBuildFunc` | `(fn func(p *Package) error)` | Custom build logic; executed only for `TargetVoid` (ignored for other kinds) |
 | `AddInputs` | `(paths ...any)` | Literal input files for opt-in incremental `TargetVoid` (no glob expansion). Both `AddInputs` and `AddOutputs` are required when either is declared; declaring only one is a build error. With neither, the callback runs once per invocation. Skip decision covers the action signature, input content hashes and output stat identity |
 | `AddOutputs` | `(paths ...any)` | Literal output files for opt-in incremental `TargetVoid` (no glob expansion) |
-| `SetPrebuilt` | `(path string)` | Pre-compiled artifact — skip compilation; output is a symlink to the source (copy when post-link steps exist) (fatal on double-set; ignored for `TargetVoid`) |
+| `SetPrebuilt` | `(path string)` | Pre-compiled artifact — skip compilation; output is a copy on Windows hosts or when post-link steps exist, otherwise a symlink to the source (fatal on double-set; ignored for `TargetVoid`) |
 | `SetInstallDir` | `(dir string)` | Install directory |
 | `SetInstall` | `(install bool)` | Control install |
 | `SetLinkerScript` | `(path string)` | Linker script (passes `-T` to linker; `TargetBinary` only; fatal on double-set) |

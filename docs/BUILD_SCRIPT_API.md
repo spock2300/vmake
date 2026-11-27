@@ -568,7 +568,7 @@ func (t *Target) AddPublicLdFlags(flags ...any) *Target    // 沿 AddDeps 传播
 func (t *Target) SetBuildFunc(fn func(p *Package) error) *Target  // 仅 TargetVoid 执行；其他 kind 设置后不会调用
 func (t *Target) AddInputs(files ...any) *Target          // TargetVoid 可选增量输入文件/glob（需与 AddOutputs 同时声明才启用增量跳过）
 func (t *Target) AddOutputs(files ...any) *Target         // TargetVoid 可选增量输出文件（相对路径未以 BuildDir 开头时基于 BuildDir 解析）
-func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，跳过编译（无后链接步骤时 symlink 到输出路径，有后链接步骤时复制；TargetVoid 忽略；重复调用 fatal）
+func (t *Target) SetPrebuilt(path string) *Target          // 预编译目标，跳过编译（Windows 宿主或有后链接步骤时复制到输出路径，其余情况使用符号链接；TargetVoid 忽略；重复调用 fatal）
 
 // RTOS/嵌入式
 func (t *Target) SetLinkerScript(path string) *Target    // 仅 TargetBinary：传递 -T 给链接器（Darwin 目标报错；其他 kind 忽略；重复调用抛出 BuildScriptError）

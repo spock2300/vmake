@@ -51,11 +51,11 @@ func (c *Compiler) Compile(src, objPath string, opts *CompileOptions, workDir st
 }
 
 func (c *Compiler) CompileContext(ctx context.Context, src, objPath string, opts *CompileOptions, workDir string) ([]string, error) {
-	compiler := *c
-	if compiler.run == nil {
-		compiler.run = gnuRunnerContext(ctx, c.env)
+	plan, err := c.planCompile(src, objPath, opts, workDir)
+	if err != nil {
+		return nil, err
 	}
-	return compiler.compile(src, objPath, opts, workDir)
+	return c.ExecutePlanContext(ctx, plan, src, objPath, workDir)
 }
 
 func (c *Compiler) ExecutePlanContext(ctx context.Context, plan compilePlan, src, objPath, workDir string) ([]string, error) {
@@ -63,15 +63,7 @@ func (c *Compiler) ExecutePlanContext(ctx context.Context, plan compilePlan, src
 	if compiler.run == nil {
 		compiler.run = gnuRunnerContext(ctx, c.env)
 	}
-	return compiler.executeCompilePlan(plan, src, objPath, workDir)
-}
-
-func (c *Compiler) compile(src, objPath string, opts *CompileOptions, workDir string) (deps []string, err error) {
-	plan, err := c.planCompile(src, objPath, opts, workDir)
-	if err != nil {
-		return nil, err
-	}
-	return c.executeCompilePlan(plan, src, objPath, workDir)
+	return compiler.executeCompilePlan(ctx, plan, src, objPath, workDir)
 }
 
 // ParseDepFile parses a gcc/clang -MD style depfile: a "target: deps..."

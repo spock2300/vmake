@@ -755,3 +755,106 @@ func TestShadowedRootFreshCloneWithoutRootMarker(t *testing.T) {
 		}
 	}
 }
+
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+}
+
+func TestFindProjectDirSoftCanonicalizesAlias(t *testing.T) {
+	arrangeResolveTestGlobals(t)
+	base := canonicalTempDir(t)
+	project := filepath.Join(base, "real-project")
+	writePathsTestFile(t, filepath.Join(project, "vmake.json"), `{"roots":["//"]}`)
+	writePathsTestFile(t, filepath.Join(project, "build.go"), "package main\n")
+	alias := filepath.Join(base, "alias-project")
+	symlinkOrSkip(t, project, alias)
+
+	t.Run("cwd_alias", func(t *testing.T) {
+		arrangeResolveTestGlobals(t)
+		t.Chdir(alias)
+		if got := findProjectDirSoft(); got != project {
+			t.Fatalf("findProjectDirSoft() from alias cwd = %q, want %q", got, project)
+		}
+	})
+
+	t.Run("override_alias", func(t *testing.T) {
+		arrangeResolveTestGlobals(t)
+		t.Chdir(base)
+		projectOverride = alias
+		if got := findProjectDirSoft(); got != project {
+			t.Fatalf("findProjectDirSoft() with alias override = %q, want %q", got, project)
+		}
+	})
+}
+
+func TestResolveProjectRootIgnoresGlobalVmakeDirViaAlias(t *testing.T) {
+	base := canonicalTempDir(t)
+	home := filepath.Join(base, "real-home")
+	previous := vmakeDir
+	vmakeDir = filepath.Join(home, ".vmake")
+	t.Cleanup(func() { vmakeDir = previous })
+	makePathsTestDir(t, vmakeDir)
+
+	homeAlias := filepath.Join(base, "home-alias")
+	symlinkOrSkip(t, home, homeAlias)
+
+	if got, ok := searchProjectDir(homeAlias); ok {
+		t.Fatalf("searchProjectDir(homeAlias) = %q, true; global .vmake via alias must not be a project marker", got)
+	}
+	if got, err := resolveProjectRootFrom(homeAlias, ""); err == nil {
+		t.Fatalf("resolveProjectRootFrom(homeAlias) = %q, nil; global .vmake via alias must not be a project root", got)
+	}
+}
+
+func TestResolveProjectRootFromSymlinkedPackageSubdir(t *testing.T) {
+	arrangeResolveTestGlobals(t)
+	base := canonicalTempDir(t)
+	project := filepath.Join(base, "real-project")
+	writePathsTestFile(t, filepath.Join(project, "vmake.json"), `{"roots":["//lib"]}`)
+	writePathsTestFile(t, filepath.Join(project, "lib", "build.go"), "package main\n")
+
+	subAlias := filepath.Join(base, "lib-alias")
+	symlinkOrSkip(t, filepath.Join(project, "lib"), subAlias)
+
+	got, err := resolveProjectRootFrom(subAlias, "")
+	if err != nil {
+		t.Fatalf("resolveProjectRootFrom(subAlias): %v", err)
+	}
+	if got != project {
+		t.Fatalf("resolveProjectRootFrom(subAlias) = %q, want %q", got, project)
+	}
+
+	t.Chdir(subAlias)
+	if got := findProjectDirSoft(); got != project {
+		t.Fatalf("findProjectDirSoft() from symlinked package subdir = %q, want %q", got, project)
+	}
+}
+
+func TestValidateProjectDirUsesCanonicalAncestry(t *testing.T) {
+	arrangeResolveTestGlobals(t)
+	base := canonicalTempDir(t)
+	project := filepath.Join(base, "real-project")
+	writePathsTestFile(t, filepath.Join(project, "vmake.json"), `{"roots":["//lib"]}`)
+	writePathsTestFile(t, filepath.Join(project, "lib", "build.go"), "package main\n")
+
+	subAlias := filepath.Join(base, "lib-alias")
+	symlinkOrSkip(t, filepath.Join(project, "lib"), subAlias)
+	if got, err := resolveProjectRootFrom("", subAlias); err == nil || !strings.Contains(err.Error(), "is a package inside project") {
+		t.Fatalf("resolveProjectRootFrom(-C subAlias) = %q, %v; want package-inside-project error", got, err)
+	}
+
+	standalone := filepath.Join(base, "standalone")
+	writePathsTestFile(t, filepath.Join(standalone, "build.go"), "package main\n")
+	nestedLink := filepath.Join(project, "ext-link")
+	symlinkOrSkip(t, standalone, nestedLink)
+	got, err := resolveProjectRootFrom("", nestedLink)
+	if err != nil {
+		t.Fatalf("resolveProjectRootFrom(-C nestedLink) failed: %v", err)
+	}
+	if got != standalone {
+		t.Fatalf("resolveProjectRootFrom(-C nestedLink) = %q, want %q", got, standalone)
+	}
+}

@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/spock2300/vmake/internal/jsonio"
 	"github.com/spock2300/vmake/pkg/api"
@@ -15,6 +19,80 @@ import (
 	repoPkg "github.com/spock2300/vmake/pkg/repo"
 	"github.com/spock2300/vmake/pkg/resolver"
 )
+
+// Windows 8.3 names and Unix directory symlinks give one project two spellings.
+func TestBuildInstallFromProjectAlias(t *testing.T) {
+	root := canonicalTempDir(t)
+	project := filepath.Join(root, "Project With A Long Name")
+	state := filepath.Join(root, "state")
+	writeHealthyDefinition(t, filepath.Join(state, "extensions", "fixture", "healthy", "toolchain.json"), "healthy")
+	writeExtensionFile(t, filepath.Join(project, "vmake.json"), `{"roots":["//","//lib"]}`)
+	for _, dir := range []string{project, filepath.Join(project, "lib")} {
+		writeExtensionFile(t, filepath.Join(dir, "build.go"), `package main
+import "github.com/spock2300/vmake/pkg/api"
+func Main(p *api.Package) {
+    p.OnBuild(func(ctx *api.BuildContext) {
+        ctx.Target("item").SetKind(api.TargetStatic).SetPrebuilt("input.a")
+    })
+}
+`)
+		writeExtensionFile(t, filepath.Join(dir, "input.a"), "fixture")
+	}
+	alias := filepath.Join(root, "alias")
+	if runtime.GOOS == "windows" {
+		// Ask cmd for the real DOS alias without inserting any user path into a command.
+		cmd := exec.Command("cmd.exe", "/d", "/u", "/c", "for %I in (.) do @echo %~fsI")
+		cmd.Dir = project
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// /u writes UTF-16LE even when the path uses characters outside the OEM code page.
+		units := make([]uint16, len(out)/2)
+		n, err := binary.Decode(out, binary.LittleEndian, units)
+		if err != nil || n != len(out) {
+			t.Fatalf("invalid UTF-16LE short path: %d bytes consumed, %d supplied, %v", n, len(out), err)
+		}
+		alias = strings.TrimSpace(string(utf16.Decode(units)))
+		if strings.EqualFold(alias, project) {
+			t.Skip("volume does not supply an 8.3 alias")
+		}
+	} else if err := os.Symlink(project, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, invocation := range []struct {
+		cwd  string
+		args []string
+	}{
+		{root, []string{"-C", alias}},
+		{project, nil},
+		{filepath.Join(alias, "lib"), nil},
+	} {
+		args := append(invocation.args, "build", "-i", "-y", "--toolchain", "healthy")
+		stdout, stderr, code := runSubprocess(t, invocation.cwd, state, []string{"PWD=" + invocation.cwd, "VMAKE_TRUST_ALL=1"}, args...)
+		if code != 0 {
+			t.Fatalf("build from %q with %v exited %d:\n%s%s", invocation.cwd, args, code, stdout, stderr)
+		}
+		manifest, err := pipeline.LoadInstallManifest(filepath.Join(project, "install", "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := make(map[string]string)
+		for _, pkg := range manifest.Packages {
+			got[pkg.Name] = pkg.Path
+		}
+		if !maps.Equal(got, map[string]string{"//": ".", "//lib": "lib"}) {
+			t.Fatalf("manifest package paths = %v", got)
+		}
+		if i > 0 {
+			summary := loadBuildReport(t, project).Summary
+			if summary == nil || summary.TargetsBuilt != 0 || summary.TargetsUpToDate != 2 {
+				t.Fatalf("unchanged project through another path: %+v", summary)
+			}
+		}
+	}
+}
 
 func TestManifestRecordsNativeContainerWithoutMemberDuplication(t *testing.T) {
 	r := resolver.NewResolver(nil, t.TempDir())
