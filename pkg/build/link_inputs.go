@@ -19,10 +19,6 @@ func (s *Scheduler) needsCXXLinkVisited(node *BuildNode, sources []string, visit
 		}
 	}
 	for _, name := range node.Deps {
-		if visited[name] {
-			continue
-		}
-		visited[name] = true
 		dep, err := s.graph.GetNode(name)
 		if err != nil {
 			return false, err
@@ -34,6 +30,10 @@ func (s *Scheduler) needsCXXLinkVisited(node *BuildNode, sources []string, visit
 		if node.Target.Kind() == api.TargetObject || (node.Target.Kind() == api.TargetStatic && kind != api.TargetObject) {
 			continue
 		}
+		if visited[name] {
+			continue
+		}
+		visited[name] = true
 		info, err := s.pkgInfoOf(dep.PkgName)
 		if err != nil {
 			return false, err

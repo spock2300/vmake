@@ -106,6 +106,27 @@ func TestNativeCXXLinkDrivers(t *testing.T) {
 	}
 }
 
+func TestNativeCXXLinkDriverOrderIndependent(t *testing.T) {
+	for _, order := range [][]string{{"liba", "libb"}, {"libb", "liba"}} {
+		t.Run(order[0]+"_"+order[1], func(t *testing.T) {
+			dir := t.TempDir()
+			writeAssemblyFixture(t, dir, "b/b.cpp", "#include <iostream>\nextern \"C\" void emit_answer(void) { std::cout << 42; }\n")
+			writeAssemblyFixture(t, dir, "a/a.c", "void emit_answer(void);\nvoid call_answer(void) { emit_answer(); }\n")
+			writeAssemblyFixture(t, dir, "main.c", "void call_answer(void);\nint main(void) { call_answer(); return 0; }\n")
+			libB := makeTargetWithDeps("libb").SetKind(api.TargetStatic).AddFiles("b/b.cpp")
+			libA := makeTargetWithDeps("liba", "libb").SetKind(api.TargetStatic).AddFiles("a/a.c")
+			app := makeTargetWithDeps("app", order...).SetKind(api.TargetBinary).AddFiles("main.c")
+			s := nativeTestScheduler(t, dir, libB, libA, app)
+			if err := s.BuildAll(); err != nil {
+				t.Fatal(err)
+			}
+			if got := readNativeValue(t, s, "app"); got != "42" {
+				t.Fatalf("app = %q, want 42", got)
+			}
+		})
+	}
+}
+
 func TestNativeHeaderWithDollarInName(t *testing.T) {
 	dir := t.TempDir()
 	writeAssemblyFixture(t, dir, "main.c", "#include <stdio.h>\n#include \"cost$unit.h\"\nint main(void){printf(\"%d\\n\",VALUE);return 0;}\n")

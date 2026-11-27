@@ -443,7 +443,7 @@ func TestPrepareAllPackagesBindsDirsBeforePatchApply(t *testing.T) {
 	}
 }
 
-func TestApplyPatchesToOrdinaryLocalPackageAndRejectUserManaged(t *testing.T) {
+func TestApplyPatchesRejectsUserManagedSources(t *testing.T) {
 	s := sessionFixture(t)
 	delete(s.ctx.DepGraph.Packages, "//dep")
 	s.ctx.DepGraph.Order = []string{"//app"}
@@ -453,11 +453,6 @@ func TestApplyPatchesToOrdinaryLocalPackageAndRejectUserManaged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(appNode.Source.Dir, "input.c"), []byte("int value = 1;\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	testGit(t, s.ctx.Paths.ProjectDir, "init", "-q")
-	testGit(t, s.ctx.Paths.ProjectDir, "config", "user.email", "test@example.com")
-	testGit(t, s.ctx.Paths.ProjectDir, "config", "user.name", "test")
-	testGit(t, s.ctx.Paths.ProjectDir, "add", "-A")
-	testGit(t, s.ctx.Paths.ProjectDir, "commit", "-q", "-m", "init")
 	patch := "--- a/input.c\n+++ b/input.c\n@@ -1 +1 @@\n-int value = 1;\n+int value = 2;\n"
 	if err := os.WriteFile(filepath.Join(appNode.Source.Dir, "local.patch"), []byte(patch), 0644); err != nil {
 		t.Fatal(err)
@@ -467,16 +462,15 @@ func TestApplyPatchesToOrdinaryLocalPackageAndRejectUserManaged(t *testing.T) {
 	if err := s.prepareAllPackages(); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		if err := s.applyPatchesToNeeded(); err != nil {
-			t.Fatalf("apply local patches in place: %v", err)
-		}
+	if err := s.applyPatchesToNeeded(); err == nil || !strings.Contains(err.Error(), "user-managed") {
+		t.Fatalf("expected user-managed error for ordinary local package, got %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(appNode.Source.Dir, "input.c"))
-	if err != nil || string(data) != "int value = 2;\n" {
-		t.Fatalf("ordinary local patched content = %q, %v", data, err)
+	if err != nil || string(data) != "int value = 1;\n" {
+		t.Fatalf("ordinary local source modified = %q, %v", data, err)
 	}
 
+	appNode.Pkg.SetPatches()
 	pathContainer := "fixture/localmod"
 	pathDir := t.TempDir()
 	s.ctx.DepGraph.Containers[pathContainer] = &resolver.ContainerNode{

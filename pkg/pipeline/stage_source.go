@@ -448,16 +448,7 @@ func (s *sourceStage) applyPatchesToNeeded() error {
 			continue
 		}
 		source := s.rc.ctx.packageSource(name, node)
-		if source.Disposition() == SourceDispositionLinked || source.Disposition() == SourceDispositionContainerLinked {
-			return fmt.Errorf("apply patches for %s: source %s is user-managed", name, node.Pkg.SrcDir())
-		}
-		if node.IsLocal() && !node.HasOwnGit() {
-			if err := applyPatchesContext(s.rc.ctx.Context, node.Pkg, node.Pkg.SrcDir()); err != nil {
-				return fmt.Errorf("apply patches for %s: %w", name, err)
-			}
-			continue
-		}
-		if source.TreeRoot() == "" {
+		if source.TreeRoot() == "" || source.Disposition() == SourceDispositionLinked || source.Disposition() == SourceDispositionContainerLinked {
 			return fmt.Errorf("apply patches for %s: source %s is user-managed", name, node.Pkg.SrcDir())
 		}
 		root := source.TreeRoot()
