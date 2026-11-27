@@ -344,12 +344,13 @@ func TestRemainingBuildDirectoriesCountsOtherConfigurations(t *testing.T) {
 	r.Graph().Order = []string{"//app", "//extra"}
 	ctx := &RuntimeContext{Resolver: r, DepGraph: r.Graph()}
 	dirs := map[string]*api.PkgDirs{
-		"//app": {SourceDir: appDir, BuildDir: filepath.Join(appDir, "build", "active")},
+		"//app": {SourceDir: appDir, BuildDir: filepath.Join(appDir, "build", "0123456789abcdef")},
 	}
 	for _, dir := range []string{
-		filepath.Join(appDir, "build", "active"),
-		filepath.Join(appDir, "build", "other"),
-		filepath.Join(extraDir, "build", "leftover"),
+		filepath.Join(appDir, "build", "0123456789abcdef"),
+		filepath.Join(appDir, "build", "fedcba9876543210"),
+		filepath.Join(appDir, "build", "notes"),
+		filepath.Join(extraDir, "build", "1111111111111111"),
 	} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)

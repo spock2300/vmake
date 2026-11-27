@@ -5,9 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spock2300/vmake/internal/fs"
@@ -45,19 +48,22 @@ func runGenRulesContext(ctx context.Context, rules []api.GenRule, generatedDir, 
 		stems[rule.OutputStem()] = rule.Input()
 
 		input := resolveWorkPath(workDir, rule.Input())
-		if !fs.FileExists(input) {
-			return fmt.Errorf("gen rule input not found: %s", rule.Input())
+		data, err := os.ReadFile(input)
+		if err != nil {
+			return fmt.Errorf("read gen rule input %s: %w", rule.Input(), err)
 		}
-
+		identity := sha256.New()
+		fmt.Fprint(identity, rule.Input(), "\x00")
+		identity.Write(data)
+		marker := "/* vmake gen: " + hex.EncodeToString(identity.Sum(nil)) + " */"
 		output := filepath.Join(generatedDir, rule.OutputStem()+".h")
-
-		if genRuleMatchesInput(output, rule.Input()) && !needGenRule(input, output) {
+		if genRuleMatchesInput(output, marker) {
 			vlog.Info("  GEN [skip] %s -> %s", rule.Input(), rule.OutputStem()+".h")
 			continue
 		}
 
 		vlog.Info("  GEN %s -> %s", rule.Input(), rule.OutputStem()+".h")
-		if err := generateBinHeaderContext(ctx, input, rule.Input(), output); err != nil {
+		if err := generateBinHeaderContext(ctx, data, marker, output); err != nil {
 			return err
 		}
 	}
@@ -65,16 +71,7 @@ func runGenRulesContext(ctx context.Context, rules []api.GenRule, generatedDir, 
 	return nil
 }
 
-// genRuleMarker is the first line of a generated header. It records which
-// buildscript input produced the file so a rule change regenerates it even
-// when the input mtime is older than the existing header. The declared input is
-// hashed to keep the comment valid for arbitrary paths.
-func genRuleMarker(input string) string {
-	sum := sha256.Sum256([]byte(input))
-	return "/* vmake gen: " + hex.EncodeToString(sum[:]) + " */"
-}
-
-func genRuleMatchesInput(output, input string) bool {
+func genRuleMatchesInput(output, marker string) bool {
 	file, err := os.Open(output)
 	if err != nil {
 		return false
@@ -84,49 +81,51 @@ func genRuleMatchesInput(output, input string) bool {
 	if err != nil && line == "" {
 		return false
 	}
-	return strings.TrimRight(line, "\r\n") == genRuleMarker(input)
+	return strings.TrimRight(line, "\r\n") == marker
 }
 
-func needGenRule(input, output string) bool {
-	outInfo, err := os.Stat(output)
-	if err != nil {
-		return true
-	}
-
-	inInfo, err := os.Stat(input)
-	if err != nil {
-		return true
-	}
-
-	return inInfo.ModTime().After(outInfo.ModTime())
-}
-
-func generateBinHeaderContext(ctx context.Context, input, declaredInput, output string) (err error) {
+func generateBinHeaderContext(ctx context.Context, data []byte, marker, output string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(input)
+	dir, err := os.MkdirTemp(filepath.Dir(output), ".vmake-gen-")
 	if err != nil {
-		return fmt.Errorf("read %s: %w", input, err)
+		return err
 	}
-
-	f, err := os.Create(output)
+	defer os.RemoveAll(dir)
+	staged := filepath.Join(dir, filepath.Base(output))
+	mode := os.FileMode(0666)
+	readOnlyTarget := false
+	if current, err := os.Stat(output); err == nil {
+		mode = current.Mode().Perm()
+		readOnlyTarget = mode&0200 == 0
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if runtime.GOOS == "windows" {
+		mode |= 0200
+	}
+	f, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", output, err)
+		return err
 	}
-	defer func() {
-		closeErr := f.Close()
-		if err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			_ = os.Remove(output)
-		}
-	}()
-
-	w := bufio.NewWriterSize(f, 32*1024)
-	if _, err := fmt.Fprintf(w, "%s\n", genRuleMarker(declaredInput)); err != nil {
+	writeErr := writeBinHeader(ctx, f, data, marker)
+	if err := errors.Join(writeErr, f.Close()); err != nil {
 		return fmt.Errorf("write %s: %w", output, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if runtime.GOOS == "windows" && readOnlyTarget {
+		_ = os.Chmod(output, mode)
+	}
+	return fs.RenameRetry(staged, output)
+}
+
+func writeBinHeader(ctx context.Context, dest io.Writer, data []byte, marker string) error {
+	w := bufio.NewWriterSize(dest, 32*1024)
+	if _, err := fmt.Fprintf(w, "%s\n", marker); err != nil {
+		return err
 	}
 
 	var line [82]byte
@@ -155,7 +154,7 @@ func generateBinHeaderContext(ctx context.Context, input, declaredInput, output 
 		line[pos] = ','
 		line[pos+1] = '\n'
 		if _, err := w.Write(line[:pos+2]); err != nil {
-			return fmt.Errorf("write %s: %w", output, err)
+			return err
 		}
 	}
 

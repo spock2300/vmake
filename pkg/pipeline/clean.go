@@ -10,6 +10,9 @@ import (
 	"github.com/spock2300/vmake/internal/fs"
 	"github.com/spock2300/vmake/internal/scriptcall"
 	"github.com/spock2300/vmake/pkg/api"
+	"github.com/spock2300/vmake/pkg/build"
+	"github.com/spock2300/vmake/pkg/buildscript"
+	"github.com/spock2300/vmake/pkg/config"
 	vlog "github.com/spock2300/vmake/pkg/log"
 )
 
@@ -19,42 +22,114 @@ type PkgCleanEntry struct {
 }
 
 func RunClean(ctx *RuntimeContext, projectOpened, cleanAll bool) error {
-	if !projectOpened {
-		if !cleanAll {
-			return fmt.Errorf("project configuration is unavailable; run 'vmake clean --all' or 'vmake distclean' to remove every build directory")
+	if !projectOpened && !cleanAll {
+		return fmt.Errorf("project configuration is unavailable; run 'vmake clean --all' or 'vmake distclean' to remove every build directory")
+	}
+	if projectOpened {
+		vlog.Info("")
+		vlog.Info("Executing OnClean...")
+		if err := ExecuteCleanHooks(ctx, false, true, !cleanAll); err != nil {
+			if !cleanAll {
+				return err
+			}
+			vlog.Error("Skipping OnClean: %v", err)
 		}
-		entries, err := ScanPackages(ctx.WorkDir)
-		if err != nil {
-			return err
-		}
-		if err := CleanPackages(entries, ctx, true); err != nil {
+	}
+	if cleanAll {
+		if err := CleanAllPackages(ctx); err != nil {
 			return err
 		}
 		RemoveStaleCompileDatabase(ctx)
 		return nil
 	}
 
-	vlog.Info("")
-	vlog.Info("Executing OnClean...")
-	if err := ExecuteCleanHooks(ctx, false, true, !cleanAll); err != nil {
-		if !cleanAll {
-			return err
-		}
-		vlog.Error("Skipping OnClean: %v", err)
-	}
-
 	entries := CollectCleanEntries(ctx)
-	insp, err := CleanPackagesInspection(entries, ctx, cleanAll)
+	insp, err := CleanPackagesInspection(entries, ctx, false)
 	if err != nil {
 		return err
 	}
 	RemoveStaleCompileDatabase(ctx)
-	if !cleanAll {
-		if remaining := RemainingBuildDirectories(ctx, PackageDirsOf(insp)); remaining > 0 {
-			vlog.Info("Note: %d build director(ies) for other configurations remain; use 'vmake clean --all' or 'vmake distclean' to remove them.", remaining)
-		}
+	if remaining := RemainingBuildDirectories(ctx, PackageDirsOf(insp)); remaining > 0 {
+		vlog.Info("Note: %d build director(ies) for other configurations remain; use 'vmake clean --all' or 'vmake distclean' to remove them.", remaining)
 	}
 	return nil
+}
+
+func CleanAllPackages(ctx *RuntimeContext) error {
+	root, err := fs.CanonicalPath(ctx.WorkDir)
+	if err != nil {
+		return err
+	}
+	entries, err := scanPackages(root, true)
+	if err != nil {
+		return err
+	}
+	var selected []PkgCleanEntry
+	if ctx.Resolver != nil {
+		selected = CollectCleanEntries(ctx)
+	}
+	var roots []string
+	if ctx.DepGraph != nil {
+		if local := ctx.DepGraph.Containers[api.LocalContainerID]; local != nil && local.Manifest != nil {
+			roots = append(roots, local.Manifest.Roots...)
+			roots = append(roots, local.Manifest.DevRoots...)
+		}
+	} else if manifest, ok, err := buildscript.LoadManifest(root); err == nil && ok && manifest != nil {
+		roots = append(roots, manifest.Roots...)
+		roots = append(roots, manifest.DevRoots...)
+	}
+	profiles, err := config.ListProjectConfigs(root)
+	if err != nil {
+		return err
+	}
+	for _, profile := range profiles {
+		roots = append(roots, profile.Roots...)
+	}
+	for _, name := range roots {
+		rel, local := api.LocalRelPath(name)
+		if !local || !filepath.IsLocal(filepath.FromSlash(rel)) || api.ValidatePackageRef(name) != nil {
+			continue
+		}
+		dir := filepath.Join(root, filepath.FromSlash(rel))
+		if info, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return err
+		} else if !info.IsDir() {
+			continue
+		}
+		subEntries, err := scanPackages(dir, true)
+		if err != nil {
+			return err
+		}
+		for _, sub := range subEntries {
+			subRel, err := filepath.Rel(root, sub.Dir)
+			if err != nil || !filepath.IsLocal(subRel) {
+				continue
+			}
+			pkgName := api.LocalContainerID
+			if subRel != "." {
+				pkgName = api.LocalContainerID + filepath.ToSlash(subRel)
+			}
+			selected = append(selected, PkgCleanEntry{Dir: sub.Dir, Name: pkgName})
+		}
+	}
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		seen[entry.Dir] = true
+	}
+	for _, entry := range selected {
+		path, err := fs.CanonicalPath(entry.Dir)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err == nil && filepath.IsLocal(rel) && !seen[path] {
+			seen[path] = true
+			entries = append(entries, PkgCleanEntry{Dir: path, Name: entry.Name})
+		}
+	}
+	return CleanPackages(entries, ctx, true)
 }
 
 func CleanPackages(entries []PkgCleanEntry, ctx *RuntimeContext, cleanAll bool) error {
@@ -152,7 +227,7 @@ func RemainingBuildDirectories(ctx *RuntimeContext, dirsFor func(name string) *a
 			continue
 		}
 		for _, entry := range entries {
-			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") && !current[entry.Name()] {
+			if entry.IsDir() && build.IsBuildKeyDir(entry.Name()) && !current[entry.Name()] {
 				total++
 			}
 		}
@@ -196,6 +271,10 @@ var cleanScanSkipDirs = map[string]bool{
 }
 
 func ScanPackages(workDir string) ([]PkgCleanEntry, error) {
+	return scanPackages(workDir, false)
+}
+
+func scanPackages(workDir string, skipNestedProjects bool) ([]PkgCleanEntry, error) {
 	root, err := filepath.Abs(workDir)
 	if err != nil {
 		return nil, err
@@ -206,8 +285,19 @@ func ScanPackages(workDir string) ([]PkgCleanEntry, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			if path != root && cleanScanSkipDirs[d.Name()] {
-				return filepath.SkipDir
+			if path != root {
+				if cleanScanSkipDirs[d.Name()] {
+					return filepath.SkipDir
+				}
+				if skipNestedProjects {
+					for _, marker := range []string{".git", ".vmake", buildscript.ManifestFileName} {
+						if _, err := os.Lstat(filepath.Join(path, marker)); err == nil {
+							return filepath.SkipDir
+						} else if !os.IsNotExist(err) {
+							return err
+						}
+					}
+				}
 			}
 			return nil
 		}
@@ -345,6 +435,9 @@ func RemoveIfExists(path, pkgName, label string, isDir bool) {
 
 func CleanAllBuildDirs(dir, pkgName string) {
 	buildBase := filepath.Join(dir, "build")
+	if info, err := os.Lstat(buildBase); err != nil || !info.IsDir() {
+		return
+	}
 	entries, err := os.ReadDir(buildBase)
 	if err != nil {
 		return
@@ -355,7 +448,7 @@ func CleanAllBuildDirs(dir, pkgName string) {
 			continue
 		}
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") {
+		if !build.IsBuildKeyDir(name) {
 			continue
 		}
 

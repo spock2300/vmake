@@ -172,7 +172,7 @@ toolchains/<host-os>/<host-arch>/<name>/<version>/
 .vmake_deps/
 ├── <repo>/<owner>/
 │   ├── src/                       # 原生模块容器或 registry 上游源码工作树（depth=1；pkg link 时删除）
-│   ├── state.json                 # urls/version/ref/commit/patchHash/submodules 物化状态
+│   ├── state.json                 # urls/version/ref/commit/patchHash/submodules/patchesApplied 物化状态
 │   ├── third_party/<memberDir>/   # 原生模块容器内构建包通过 SetGit 声明的独立上游源码
 │   │   ├── src/
 │   │   └── state.json
@@ -213,7 +213,8 @@ project/
 │   ├── vmake.lock                 # 锁文件 v2：containers（模块容器）与 sources（独立上游源码）的版本、commit、来源
 │   ├── local.json                 # 机器本地的当前配置游标 config 与源码 link（不提交）
 │   ├── layout                     # 存储布局版本标记（当前 "5"）
-│   └── _locks/project.lock        # 工程独占锁（同工程命令串行）
+│   ├── _install/                  # 工程内安装前缀替换期间的瞬态恢复目录（提交或回滚后移除，distclean 清理）
+│   └── _locks/                    # project.lock（工程独占锁）与 install-*.lock（工程内安装前缀锁）
 ├── .vmake_deps/                   # 第三方源码工作树与产物（自动生成，已 gitignore）
 │   ├── <repo>/<owner>/
 │   │   ├── src/                   # 模块容器或 registry 唯一工作树
@@ -266,7 +267,7 @@ vmake build -c sku-a
 
 TUI 和 `vmake config --set/--unset` 仅保存当前（或 `-c` 指定）配置。构建、测试、查询、`inspect`、清理、`doctor` 和 `deps` 均读取当前配置并支持 `-c <profile>` 无状态覆盖。
 
-所有配置共享 `.vmake/vmake.lock`（schema v2，分 `containers` 与 `sources` 两区）与 `.vmake/project.json` 中的 `pins`，切换配置本身不改写依赖锁。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建输出，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`；同时保留多个安装结果时，可通过 `--prefix` 指定独立输出目录（例如 `-p install/sku-a`）。
+所有配置共享 `.vmake/vmake.lock`（schema v2，分 `containers` 与 `sources` 两区）与 `.vmake/project.json` 中的 `pins`，切换配置本身不改写依赖锁。构建缓存键不包含配置文件名，等效配置可以复用产物；`clean` 清理当前配置对应的构建输出，`clean --all` 和 `distclean` 保留所有配置及选择文件。安装仍默认使用 `install/`；同时保留多个安装结果时，可通过 `--prefix` 指定独立输出目录（例如 `-p install/sku-a`）。安装采用同卷事务替换：失败、取消或中断时恢复上一次交付结果；工程内前缀（`install/` 及 `install/*`）将恢复元数据与锁放在 `.vmake/_install/` 与 `.vmake/_locks/install-*.lock`，工程外自定义 `--prefix`（或指向外部目录的符号链接）在目标父目录旁维护隐藏的 `.<base>.vmake-installing` 与 `.<base>.vmake-install.lock` 以串行化跨工程写入。
 
 每份项目配置的结构（`pkg/config/store.go`）：
 

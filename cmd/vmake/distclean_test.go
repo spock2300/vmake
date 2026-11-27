@@ -19,7 +19,7 @@ func Main(p *api.Package) {}
 	source := filepath.Join(tree, "src", "zlib.c")
 	stateFile := filepath.Join(tree, "state.json")
 	remoteOutput := filepath.Join(tree, "out", "owner", "buildkey", "build", "zlib.o")
-	localOutput := filepath.Join(root, "build", "buildkey", "app.o")
+	localOutput := filepath.Join(root, "build", "0123456789abcdef", "app.o")
 	compileDB := filepath.Join(root, "build", "compile_commands.json")
 	installBin := filepath.Join(root, "install", "bin", "app")
 	for _, path := range []string{source, stateFile, remoteOutput, localOutput, compileDB, installBin} {

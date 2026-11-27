@@ -379,7 +379,8 @@ func (s *sourceStage) saveLockfile(updated *lockfile.Lock) error {
 func (s *sourceStage) containerTreeIdentity(containerID string) (string, bool, error) {
 	var names []string
 	submodules := false
-	for name, node := range s.rc.ctx.DepGraph.Packages {
+	for _, name := range s.rc.ctx.Resolver.GetOrder() {
+		node := s.rc.ctx.DepGraph.Packages[name]
 		if !s.conf.needed[name] || node == nil || node.Container != containerID {
 			continue
 		}
@@ -391,7 +392,6 @@ func (s *sourceStage) containerTreeIdentity(containerID string) (string, bool, e
 			submodules = true
 		}
 	}
-	sort.Strings(names)
 	hashes := make(map[string]string, len(names))
 	nonEmptyCount := 0
 	singleHash := ""
@@ -440,59 +440,58 @@ func (s *sourceStage) ownGitSourceNeedsMaterialization(name string, source *Pack
 }
 
 func (s *sourceStage) applyPatchesToNeeded() error {
+	series := make(map[string][]string)
+	var roots []string
 	for _, name := range s.rc.ctx.Resolver.GetOrder() {
 		node := s.rc.ctx.DepGraph.Packages[name]
-		if !s.conf.needed[name] || node == nil || node.Pkg == nil || node.Source == nil {
+		if !s.conf.needed[name] || node == nil || node.Pkg == nil || node.Source == nil || len(node.Pkg.GetPatches()) == 0 {
 			continue
 		}
-		if len(node.Pkg.GetPatches()) == 0 {
+		source := s.rc.ctx.packageSource(name, node)
+		if source.Disposition() == SourceDispositionLinked || source.Disposition() == SourceDispositionContainerLinked {
+			return fmt.Errorf("apply patches for %s: source %s is user-managed", name, node.Pkg.SrcDir())
+		}
+		if node.IsLocal() && !node.HasOwnGit() {
+			if err := applyPatchesContext(s.rc.ctx.Context, node.Pkg, node.Pkg.SrcDir()); err != nil {
+				return fmt.Errorf("apply patches for %s: %w", name, err)
+			}
 			continue
 		}
-		if err := s.applyPatchesFor(name); err != nil {
+		if source.TreeRoot() == "" {
+			return fmt.Errorf("apply patches for %s: source %s is user-managed", name, node.Pkg.SrcDir())
+		}
+		root := source.TreeRoot()
+		if len(series[root]) == 0 {
+			roots = append(roots, root)
+		}
+		series[root] = append(series[root], name)
+	}
+	manager := repo.NewSourceManager(s.rc.ctx.Paths.DepsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
+	for _, root := range roots {
+		state, err := manager.ReadState(root)
+		if err != nil {
+			return err
+		}
+		if state == nil || state.PatchHash == "" {
+			return fmt.Errorf("apply patches for %s: materialized tree has no patch identity", series[root][0])
+		}
+		if state.PatchesApplied {
+			for _, name := range series[root] {
+				vlog.Info("Applying patches for %s (already applied)", name)
+			}
+			continue
+		}
+		for _, name := range series[root] {
+			pkg := s.rc.ctx.DepGraph.Packages[name].Pkg
+			if err := applyPatchesContext(s.rc.ctx.Context, pkg, pkg.SrcDir()); err != nil {
+				return fmt.Errorf("apply patches for %s: %w", name, err)
+			}
+		}
+		if err := manager.FinishPatchSet(root, state.PatchHash); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// applyPatchesFor applies the package patch series to its working tree. A
-// failed application clears the tree's patch identity so the next invocation
-// recreates a clean tree instead of reusing a partially patched one.
-func (s *sourceStage) applyPatchesFor(name string) error {
-	node := s.rc.ctx.DepGraph.Packages[name]
-	if node == nil || node.Pkg == nil {
-		return nil
-	}
-	if node.Source != nil && node.Source.Link != nil && node.Source.Link.LocalSource && pathWithin(node.Source.Link.Path, node.Pkg.SrcDir()) {
-		return fmt.Errorf("apply patches for %s: linked source %s is user-managed", name, node.Source.Link.Path)
-	}
-	if err := applyPatchesContext(s.rc.ctx.Context, node.Pkg, node.Pkg.SrcDir()); err != nil {
-		s.clearPatchState(name)
-		return fmt.Errorf("apply patches for %s: %w", name, err)
-	}
-	return nil
-}
-
-func (s *sourceStage) clearPatchState(name string) {
-	if s.dryRun {
-		return
-	}
-	root := s.treeRootFor(name)
-	if root == "" {
-		return
-	}
-	manager := repo.NewSourceManager(s.rc.ctx.Paths.DepsDir, s.rc.ctx.Paths.CacheDir).WithSession(s.rc.ctx.Locks).WithContext(s.rc.ctx.Context)
-	if err := manager.ClearPatchState(root); err != nil {
-		vlog.Info("  warning: reset patch state for %s: %v", name, err)
-	}
-}
-
-func (s *sourceStage) treeRootFor(name string) string {
-	source := s.rc.ctx.packageSource(name, s.rc.ctx.DepGraph.Packages[name])
-	if source == nil {
-		return ""
-	}
-	return source.TreeRoot()
 }
 
 func (s *sourceStage) restoreKConfigs() error {

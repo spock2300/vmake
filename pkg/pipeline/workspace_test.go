@@ -403,6 +403,9 @@ func TestPrepareAllPackagesBindsDirsBeforePatchApply(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := os.WriteFile(filepath.Join(scriptDir, "followup.patch"), []byte("--- a/input.c\n+++ b/input.c\n@@ -1 +1 @@\n-int value = 2;\n+int value = 3;\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	s := sessionFixture(t)
 	delete(s.ctx.DepGraph.Packages, "//app")
 	delete(s.ctx.DepGraph.Packages, "//dep")
@@ -418,7 +421,7 @@ func TestPrepareAllPackagesBindsDirsBeforePatchApply(t *testing.T) {
 	src.RelPath = "sample"
 	node := resolver.NewPackageNode("official/sample", "official", "sample", resolver.SourceKindRegistry, src,
 		api.NewPackage().SetRepo("official").SetName("sample"))
-	node.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch").SetGit(upstream)
+	node.Pkg.SetScriptDir(scriptDir).AddPatches("change.patch", "followup.patch").SetGit(upstream)
 	s.ctx.DepGraph.Packages["official/sample"] = node
 
 	if err := s.prepareAllPackages(); err != nil {
@@ -427,13 +430,71 @@ func TestPrepareAllPackagesBindsDirsBeforePatchApply(t *testing.T) {
 	if err := s.applyPatchesToNeeded(); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.applyPatchesToNeeded(); err != nil {
+		t.Fatalf("reuse ordered patch series: %v", err)
+	}
 	dirs := s.pkgDirs["official/sample"]
 	if node.Pkg.SourceDir() != dirs.SourceDir {
 		t.Fatalf("source dir = %q, want %q", node.Pkg.SourceDir(), dirs.SourceDir)
 	}
 	data, err := os.ReadFile(filepath.Join(node.Pkg.SrcDir(), "input.c"))
-	if err != nil || string(data) != "int value = 2;\n" {
+	if err != nil || string(data) != "int value = 3;\n" {
 		t.Fatalf("patched content = %q, %v", data, err)
+	}
+}
+
+func TestApplyPatchesToOrdinaryLocalPackageAndRejectUserManaged(t *testing.T) {
+	s := sessionFixture(t)
+	delete(s.ctx.DepGraph.Packages, "//dep")
+	s.ctx.DepGraph.Order = []string{"//app"}
+	s.needed = map[string]bool{"//app": true}
+
+	appNode := s.ctx.DepGraph.Packages["//app"]
+	if err := os.WriteFile(filepath.Join(appNode.Source.Dir, "input.c"), []byte("int value = 1;\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, s.ctx.Paths.ProjectDir, "init", "-q")
+	testGit(t, s.ctx.Paths.ProjectDir, "config", "user.email", "test@example.com")
+	testGit(t, s.ctx.Paths.ProjectDir, "config", "user.name", "test")
+	testGit(t, s.ctx.Paths.ProjectDir, "add", "-A")
+	testGit(t, s.ctx.Paths.ProjectDir, "commit", "-q", "-m", "init")
+	patch := "--- a/input.c\n+++ b/input.c\n@@ -1 +1 @@\n-int value = 1;\n+int value = 2;\n"
+	if err := os.WriteFile(filepath.Join(appNode.Source.Dir, "local.patch"), []byte(patch), 0644); err != nil {
+		t.Fatal(err)
+	}
+	appNode.Pkg.SetScriptDir(appNode.Source.Dir).AddPatches("local.patch")
+
+	if err := s.prepareAllPackages(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.applyPatchesToNeeded(); err != nil {
+			t.Fatalf("apply local patches in place: %v", err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(appNode.Source.Dir, "input.c"))
+	if err != nil || string(data) != "int value = 2;\n" {
+		t.Fatalf("ordinary local patched content = %q, %v", data, err)
+	}
+
+	pathContainer := "fixture/localmod"
+	pathDir := t.TempDir()
+	s.ctx.DepGraph.Containers[pathContainer] = &resolver.ContainerNode{
+		ID:        pathContainer,
+		Repo:      "fixture",
+		Kind:      resolver.SourceKindNative,
+		Dir:       pathDir,
+		Version:   resolver.LocalPathVersion,
+		LocalPath: true,
+	}
+	modNode := addNativeMemberNode(s, pathContainer, "", pathDir)
+	modNode.Pkg.SetScriptDir(appNode.Source.Dir).AddPatches("local.patch")
+	s.needed[pathContainer] = true
+	if err := s.prepareAllPackages(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyPatchesToNeeded(); err == nil || !strings.Contains(err.Error(), "user-managed") {
+		t.Fatalf("expected user-managed error for local-path container, got %v", err)
 	}
 }
 

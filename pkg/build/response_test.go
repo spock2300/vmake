@@ -58,24 +58,28 @@ func TestResponseFileReuse(t *testing.T) {
 	}
 }
 
-func TestResponseFileRepairsTruncatedCache(t *testing.T) {
-	dir := t.TempDir()
-	file := responseFileFor(dir, []string{"-Iinc"})
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(file.path, []byte("short"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := ensureResponseFile(t.Context(), file); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(file.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != file.content {
-		t.Fatalf("content = %q, want %q", data, file.content)
+func TestResponseFileRepairsDamagedCache(t *testing.T) {
+	for _, corrupt := range []string{"short", formatResponseArgs([]string{"-Ibad"})} {
+		t.Run(corrupt, func(t *testing.T) {
+			dir := t.TempDir()
+			file := responseFileFor(dir, []string{"-Iinc"})
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file.path, []byte(corrupt), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := ensureResponseFile(t.Context(), file); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(file.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != file.content {
+				t.Fatalf("content = %q, want %q", data, file.content)
+			}
+		})
 	}
 }
 
@@ -280,9 +284,20 @@ func TestHoistedCompileRuns(t *testing.T) {
 }
 
 func TestHoistedArchiveRuns(t *testing.T) {
-	ar, err := exec.LookPath("ar")
-	if err != nil {
-		t.Skip("ar unavailable")
+	var ar string
+	for _, name := range []string{"ar", "llvm-ar", "gcc-ar", "x86_64-w64-mingw32-ar"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		version, err := exec.Command(path, "--version").Output()
+		if err == nil && (strings.Contains(string(version), "GNU") || strings.Contains(string(version), "LLVM")) {
+			ar = path
+			break
+		}
+	}
+	if ar == "" {
+		t.Skip("a GNU or LLVM archiver accepting @response files is required")
 	}
 	workDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workDir, "a.o"), []byte("object"), 0644); err != nil {

@@ -29,10 +29,9 @@ the installation manifest (`install/manifest.json`). `clean`, `distclean`, and
 | `artifacts` | Files installed by this invocation only: `package`, `target`, `buildPath`, `installPath`, `size`, `sha256` |
 
 A target's `status` is `built` when it compiled or linked something in this
-invocation, or when it is a `void` target (a plain void target always runs its
-callback; an incremental void target with `AddInputs`/`AddOutputs` is still
-`built` when its action is up to date and the callback was skipped); otherwise
-it is `up-to-date`. `durationMs` is nonnegative and 0 when too fast to
+invocation or executed a `void` action. A plain void target runs once per invocation.
+An incremental void target with unchanged declared inputs and outputs reports
+`up-to-date` when its action is skipped. `durationMs` is nonnegative and 0 when too fast to
 measure. Non-default targets are never executed or recorded. Test targets appear
 for `vmake build --tests`, `vmake rebuild --tests`, and `vmake test`.
 
@@ -41,12 +40,11 @@ for `vmake build --tests`, `vmake rebuild --tests`, and `vmake test`.
 `summary` repeats `durationMs` and carries `targetsTotal`, `targetsBuilt`,
 `targetsUpToDate`, `targetsFailed`, `testsFound`, `testsPassed`, `testsFailed`,
 `filesCompiled`, `filesLinked`, `actionsUpToDate`, `artifactsInstalled`, and
-`changedFiles`, plus `callbacks` (built void targets; an incremental void target
-counts even when its callback was skipped as up to date), `externalStages`
+`changedFiles`, plus `callbacks` (calls to a void target’s build function), `externalStages`
 (executed CMake/Make helper stages) and `noOp`.
 
 `targetsBuilt` counts target records with status `built`, including `void`
-targets (an incremental void target counts even when up to date); `noOp` can be
+targets with executed actions; `noOp` can be
 true while `targetsBuilt` is nonzero (for example eight callback targets) but
 requires `externalStages == 0`; CMake/Make helper work makes it false.
 

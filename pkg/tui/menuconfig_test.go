@@ -181,7 +181,7 @@ func TestToolchainDiagnosticsPreserveInvalidSelection(t *testing.T) {
 		t.Fatalf("selection was replaced: %v", m.ed().GlobalValues)
 	}
 	m.width = 120
-	footer := m.renderFooter()
+	footer := strings.Join(strings.Fields(m.renderFooter()), " ")
 	for _, want := range []string{"2 unavailable toolchain definitions", "vmake toolchain list", "broken", "unsupported field install"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("footer missing %q: %s", want, footer)

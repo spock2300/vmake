@@ -98,7 +98,7 @@ func TestFailedTargetDoesNotRecordOutcome(t *testing.T) {
 	}
 }
 
-func TestIncrementalVoidOutcomeIsAlwaysBuilt(t *testing.T) {
+func TestIncrementalVoidOutcomeTracksCallbackExecution(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "input.txt")
 	output := filepath.Join(dir, "output.txt")
@@ -121,6 +121,9 @@ func TestIncrementalVoidOutcomeIsAlwaysBuilt(t *testing.T) {
 	if results := firstSession.TargetResults(); len(results) != 1 || results[0].Status != TargetStatusBuilt {
 		t.Fatalf("first void result = %+v", results)
 	}
+	if got := first.Stats().Snapshot().Callbacks; got != 1 {
+		t.Fatalf("first callback count = %d", got)
+	}
 	if placements := firstSession.TargetPlacements(); len(placements) != 0 {
 		t.Fatalf("void target exposed placements: %+v", placements)
 	}
@@ -130,7 +133,10 @@ func TestIncrementalVoidOutcomeIsAlwaysBuilt(t *testing.T) {
 	if err := second.BuildAll(); err != nil {
 		t.Fatal(err)
 	}
-	if results := secondSession.TargetResults(); len(results) != 1 || results[0].Status != TargetStatusBuilt {
+	if got := second.Stats().Snapshot().Callbacks; got != 0 {
+		t.Fatalf("cached callback count = %d", got)
+	}
+	if results := secondSession.TargetResults(); len(results) != 1 || results[0].Status != TargetStatusUpToDate {
 		t.Fatalf("up-to-date void result = %+v", results)
 	}
 }

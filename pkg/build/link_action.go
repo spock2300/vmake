@@ -19,6 +19,13 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 	target := resolved.Node.Target
 	info := s.pkgs[resolved.Node.PkgName]
 	workDir := info.SourceDir
+	var overrides map[string]string
+	if s.resolvedTools != nil {
+		overrides = s.resolvedTools.env
+	} else if s.toolchain != nil {
+		overrides = s.toolchain.CommandEnv()
+	}
+	env := actionEnvironment(overrides)
 	policy := LinkPolicy{
 		TargetOS:      s.targetOS(resolved.Node.PkgName),
 		VersionScript: resolved.VersionScript,
@@ -53,6 +60,12 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 		}
 		linkCommand = commandSpec{Program: operation, Args: []string{source, resolved.OutputPath}}
 	} else {
+		if target.Kind() == api.TargetBinary || target.Kind() == api.TargetShared {
+			policy.CXX, err = s.needsCXXLink(resolved.Node, resolved.SourceFiles)
+			if err != nil {
+				return nil, err
+			}
+		}
 		allObjs := append(append([]string{}, objs...), resolved.DepArtifacts...)
 		switch target.Kind() {
 		case api.TargetBinary:
@@ -88,6 +101,13 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 		if err != nil {
 			return nil, err
 		}
+		if target.Kind() == api.TargetBinary || target.Kind() == api.TargetShared {
+			libraries := externalLinkInputs(workDir, policy.TargetOS, env["LIBRARY_PATH"], resolved.AllLinks, resolved.AllLdFlags)
+			action.Inputs = append(action.Inputs, libraries...)
+			if runtime.GOOS == "windows" {
+				s.hashes.evict(workDir, libraries)
+			}
+		}
 		linkCommand = linkCommandForHost(runtime.GOOS, workDir, resolveWorkPath(workDir, info.RspDir()), linkCommand)
 		if importLibrary := importLibraryPath(resolved.OutputPath, policy.TargetOS, target.Kind()); importLibrary != "" {
 			action.Outputs = append(action.Outputs, importLibrary)
@@ -104,11 +124,10 @@ func (s *Scheduler) planLink(resolved *ResolvedTarget, objs []string) (*plannedA
 	}
 	action.Commands = append([]commandSpec{linkCommand}, postCommands...)
 	action.SignatureInputs = append([]string{}, action.Inputs...)
-	env, err := environmentSignature(s.toolchain.CommandEnv())
+	action.Environment, err = digestValue(env)
 	if err != nil {
 		return nil, err
 	}
-	action.Environment = env
 	return action, nil
 }
 

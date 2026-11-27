@@ -68,6 +68,10 @@ func pathKey(path string) string {
 }
 
 func environmentSignature(overrides map[string]string) (string, error) {
+	return digestValue(actionEnvironment(overrides))
+}
+
+func actionEnvironment(overrides map[string]string) map[string]string {
 	env := make(map[string]string)
 	keyOf := func(key string) string {
 		if runtime.GOOS == "windows" {
@@ -90,7 +94,7 @@ func environmentSignature(overrides map[string]string) (string, error) {
 	for key, value := range overrides {
 		env[keyOf(key)] = value
 	}
-	return digestValue(env)
+	return env
 }
 
 type fileHashCache struct {

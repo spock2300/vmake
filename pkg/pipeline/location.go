@@ -17,7 +17,7 @@ import (
 //	PackageRoot     directory supplying build.go  PkgDirs.SourceDir base
 //	SourceTree      materialized source tree      Pkg.SrcDir() base
 //	ThirdPartyRoot  own-Git member tree root      (<owner>/third_party/<memberDir>)
-//	TreeRoot        tree owning state.json/patch  (see treeRootFor)
+//	TreeRoot        tree owning state.json and the patch set
 //	Linked          true when SourceTree is directly user-linked
 //	ContainerLinked true when the native container is user-linked
 type packageLocation struct {

@@ -41,20 +41,20 @@ const LocalPathVersion = "0.0.0-path"
 // ("//"), a versioned native Git repository ("<repo>/<module>"), or a registry
 // wrapper repository ("<repo>").
 type ContainerNode struct {
-	ID              string
-	Repo            string
-	RepoURL         string
-	Kind            SourceKind
-	Dir             string
-	URL             string
-	Version         string
-	Commit          string
-	Versions        map[string]string
+	ID               string
+	Repo             string
+	RepoURL          string
+	Kind             SourceKind
+	Dir              string
+	URL              string
+	Version          string
+	Commit           string
+	Versions         map[string]string
 	Link             *buildscript.SourceLink
 	LocalPath        bool
 	DeclaredByRemote bool
 	Manifest         *buildscript.Manifest
-	Constraints     []string
+	Constraints      []string
 }
 
 func (c *ContainerNode) IsLocal() bool     { return c != nil && c.Kind == SourceKindLocal }
@@ -438,8 +438,11 @@ func (r *Resolver) ResolveProject(projectDir string, rootOverrides []string) err
 		}
 	}
 
-	const maxPasses = 8
-	for pass := 0; pass < maxPasses; pass++ {
+	for {
+		if err := r.ctx.Err(); err != nil {
+			r.Close()
+			return err
+		}
 		r.resetGraph()
 		localContainer := &ContainerNode{
 			ID:       api.LocalContainerID,
@@ -457,6 +460,10 @@ func (r *Resolver) ResolveProject(projectDir string, rootOverrides []string) err
 			return err
 		}
 		if restart != nil {
+			if len(restart.constraints) <= len(knownConstraints[restart.containerID]) {
+				r.Close()
+				return fmt.Errorf("dependency resolution made no progress for %s with constraints %v", restart.containerID, restart.constraints)
+			}
 			knownConstraints[restart.containerID] = restart.constraints
 			continue
 		}
@@ -470,9 +477,6 @@ func (r *Resolver) ResolveProject(projectDir string, rootOverrides []string) err
 		}
 		return nil
 	}
-
-	r.Close()
-	return fmt.Errorf("dependency resolution did not converge after %d constraint intersection passes", maxPasses)
 }
 
 func (r *Resolver) resolveRootsPass(localContainer *ContainerNode, roots []string, knownConstraints map[string][]string) (*constraintRestart, error) {

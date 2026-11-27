@@ -26,7 +26,8 @@ Downloaded package sources under .vmake_deps/ are kept so the next build
 reuses the existing working trees without re-downloading. Pass
 --purge-sources to remove them too; use 'vmake pkg clean <repo/name> -a'
 to purge individual packages.`,
-	Run: runDistClean,
+	Args: cobra.NoArgs,
+	Run:  runDistClean,
 }
 
 func runDistClean(cmd *cobra.Command, args []string) {
@@ -42,14 +43,11 @@ func runDistClean(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	entries := scanPackages(ctx.WorkDir)
-	if err := pipeline.CleanPackages(entries, ctx, true); err != nil {
-		vlog.Error("Error: %v", err)
-	}
+	fatalErr(pipeline.CleanAllPackages(ctx))
 
 	pipeline.RemoveIfExists(filepath.Join(ctx.Paths.ProjectDir, "build", "compile_commands.json"), "", "compile_commands.json", false)
 
-	pipeline.RemoveIfExists(filepath.Join(ctx.Paths.ProjectDir, "install"), "", "install/", true)
+	pipeline.CleanInstallPrefix(ctx.Paths.ProjectDir)
 
 	if distCleanPurgeSources {
 		pipeline.RemoveIfExists(getDepsDir(), "", ".vmake_deps/", true)

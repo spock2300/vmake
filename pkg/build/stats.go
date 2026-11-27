@@ -18,6 +18,7 @@ type BuildStats struct {
 	mu            sync.Mutex
 	compiled      int
 	linked        int
+	callbacks     int
 	upToDate      int
 	compiledFiles map[string]bool
 	targetSize    map[string]*TargetSize
@@ -26,6 +27,7 @@ type BuildStats struct {
 type StatsSnapshot struct {
 	Compiled      int
 	Linked        int
+	Callbacks     int
 	UpToDate      int
 	CompiledFiles []string
 }
@@ -62,6 +64,12 @@ func (s *BuildStats) RecordLink(target string) {
 	s.linked++
 }
 
+func (s *BuildStats) RecordCallback() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.callbacks++
+}
+
 func (s *BuildStats) RecordUpToDate() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -86,6 +94,7 @@ func (s *BuildStats) Snapshot() StatsSnapshot {
 	return StatsSnapshot{
 		Compiled:      s.compiled,
 		Linked:        s.linked,
+		Callbacks:     s.callbacks,
 		UpToDate:      s.upToDate,
 		CompiledFiles: sortedKeys(s.compiledFiles),
 	}

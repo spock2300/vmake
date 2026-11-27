@@ -195,20 +195,10 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 
 	resolved.AllLdFlags = append(resolved.AllLdFlags, deps.voidLdFlags...)
 
-	excludes := node.Target.ExcludedFiles()
-	sourceDir := pkgInfo.SourceDir
 	pkg := s.packages[node.PkgName]
-	for _, rawPattern := range node.Target.Files() {
-		pattern := expandBuildDirToken(buildDir, rawPattern)
-		files, err := glob.Match(pattern, sourceDir)
-		if err != nil {
-			return nil, err
-		}
-		for _, f := range files {
-			if !matchesAny(f, excludes) {
-				resolved.SourceFiles = append(resolved.SourceFiles, f)
-			}
-		}
+	resolved.SourceFiles, err = targetSourceFiles(node.Target, pkgInfo)
+	if err != nil {
+		return nil, err
 	}
 
 	resolved.OutputPath = PlacementFor(node.Target, s.pkgs[node.PkgName], s.targetOS(node.PkgName)).OutputPath
@@ -260,10 +250,29 @@ func (s *Scheduler) resolveTarget(node *BuildNode) (*ResolvedTarget, error) {
 	resolved.SymbolBinding = node.Target.SymbolBinding()
 
 	resolved.AllIncludes = unique(resolved.AllIncludes)
-	resolved.SourceFiles = unique(resolved.SourceFiles)
 	resolved.Placement = s.placementFor(resolved, pkgInfo)
 
 	return resolved, nil
+}
+
+func targetSourceFiles(target *api.Target, info *PkgInfo) ([]string, error) {
+	var sources []string
+	excludes := target.ExcludedFiles()
+	sourceDir := info.SourceDir
+	buildDir := info.EffectiveBuildDir()
+	for _, rawPattern := range target.Files() {
+		pattern := expandBuildDirToken(buildDir, rawPattern)
+		files, err := glob.Match(pattern, sourceDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			if !matchesAny(f, excludes) {
+				sources = append(sources, f)
+			}
+		}
+	}
+	return unique(sources), nil
 }
 
 func (s *Scheduler) resolveDependencyLinkerScript(node *BuildNode) (string, error) {

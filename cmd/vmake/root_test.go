@@ -68,7 +68,7 @@ func arrangeResolveTestGlobals(t *testing.T) {
 
 func TestLoadResolveParams(t *testing.T) {
 	arrangeResolveTestGlobals(t)
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".vmake"), 0755); err != nil {
 		t.Fatal(err)
 	}

@@ -43,8 +43,9 @@ Phase 3: OnBuild (pipeline.RunBuild)
     [构建完成后：vmake test 以 IncludeTests=true 构建，再执行测试二进制]
     │
 (Optional) Install
-    清理 `--prefix` 或默认安装前缀 → 复用构建期 OnBuild 声明并执行 OnInstall 回调收集安装项
-    → ArtifactInstaller.InstallAll → 安装目标产物 → 生成 manifest.json
+    事务化备份并重建 `--prefix` 或默认安装前缀（失败或中断自动回滚上一版交付）
+    → 复用构建期 OnBuild 声明并执行 OnInstall 回调收集安装项
+    → ArtifactInstaller.InstallAll → 安装目标产物 → 生成 manifest.json 并提交事务
 ```
 
 `RunBuild` 与 `InspectWithOptions` 共享 `buildPrelude`：needed/chip/config/global flags 只由 `prepareBuild` 推导一次；`deps status/fetch` 走窄版 `resolveNeeded`，不解析 toolchain。`RunBuild` 内部按阶段拆分状态：`runContext`（请求与共享会话）、`configStage`（needed/options）、

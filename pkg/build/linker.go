@@ -12,21 +12,31 @@ import (
 )
 
 type Linker struct {
-	ccPath string
-	arPath string
-	run    cmdRunner
+	ccPath  string
+	cxxPath string
+	arPath  string
+	run     cmdRunner
 }
 
 func NewLinker(tools *ResolvedTools) *Linker {
 	return &Linker{
-		ccPath: tools.CC,
-		arPath: tools.AR,
-		run:    gnuRunner(tools.env),
+		ccPath:  tools.CC,
+		cxxPath: tools.CXX,
+		arPath:  tools.AR,
+		run:     gnuRunner(tools.env),
 	}
+}
+
+func (l *Linker) driverPath(cxx bool) string {
+	if cxx && l.cxxPath != "" {
+		return l.cxxPath
+	}
+	return l.ccPath
 }
 
 type LinkPolicy struct {
 	TargetOS      string
+	CXX           bool
 	VersionScript string
 	ExcludeLibs   []string
 	SymbolBinding string
@@ -69,10 +79,22 @@ func isLibraryArtifact(path string) bool {
 	return false
 }
 
+func isGroupLinkFlag(flag string) bool {
+	if strings.HasPrefix(flag, "-L") {
+		return true
+	}
+	return strings.HasPrefix(flag, "-l") && !strings.HasPrefix(flag, "-lazy_") && !strings.HasPrefix(flag, "-lto_")
+}
+
 func splitLinkFlags(ldflags []string) (group, other []string) {
-	for _, flag := range ldflags {
-		if strings.HasPrefix(flag, "-l") || strings.HasPrefix(flag, "-L") {
+	for i := 0; i < len(ldflags); i++ {
+		flag := ldflags[i]
+		if isGroupLinkFlag(flag) {
 			group = append(group, flag)
+			if (flag == "-L" || flag == "-l") && i+1 < len(ldflags) {
+				i++
+				group = append(group, ldflags[i])
+			}
 		} else {
 			other = append(other, flag)
 		}
@@ -143,7 +165,7 @@ func (l *Linker) binaryCommand(in binaryLinkInput, policy LinkPolicy, workDir st
 		return commandSpec{}, err
 	}
 	if policy.TargetOS == "darwin" {
-		return l.machoBinaryCommand(in, workDir)
+		return l.machoBinaryCommand(in, policy.CXX, workDir)
 	}
 	objs := in.objs
 	libs := in.libs
@@ -190,10 +212,10 @@ func (l *Linker) binaryCommand(in binaryLinkInput, policy LinkPolicy, workDir st
 	}
 	args = append(args, otherFlags...)
 	args = append(args, policy.bindingFlags()...)
-	return commandSpec{Program: l.ccPath, Args: args}, nil
+	return commandSpec{Program: l.driverPath(policy.CXX), Args: args}, nil
 }
 
-func (l *Linker) machoBinaryCommand(in binaryLinkInput, workDir string) (commandSpec, error) {
+func (l *Linker) machoBinaryCommand(in binaryLinkInput, cxx bool, workDir string) (commandSpec, error) {
 	if in.linkerScript != "" {
 		return commandSpec{}, fmt.Errorf("linker scripts are not supported for Mach-O targets")
 	}
@@ -231,7 +253,7 @@ func (l *Linker) machoBinaryCommand(in binaryLinkInput, workDir string) (command
 	}
 	args = append(args, groupFlags...)
 	args = append(args, otherFlags...)
-	return commandSpec{Program: l.ccPath, Args: args}, nil
+	return commandSpec{Program: l.driverPath(cxx), Args: args}, nil
 }
 
 func machoDylibDirs(paths []string) []string {
@@ -263,6 +285,22 @@ func (l *Linker) staticCommand(objs []string, outputPath, workDir string) comman
 	return commandSpec{Program: l.arPath, Args: append(args, commandPaths(workDir, objs)...)}
 }
 
+func hasDarwinInstallName(flags []string) bool {
+	for _, flag := range flags {
+		if flag == "-install_name" || flag == "-dylib_install_name" {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(flag, "-Wl,"); ok {
+			for _, token := range strings.Split(rest, ",") {
+				if token == "-install_name" || token == "-dylib_install_name" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (l *Linker) sharedCommand(objs, ldflags []string, outputPath string, policy LinkPolicy, workDir string) (commandSpec, error) {
 	if err := policy.Validate(); err != nil {
 		return commandSpec{}, err
@@ -282,7 +320,7 @@ func (l *Linker) sharedCommand(objs, ldflags []string, outputPath string, policy
 		driverFlag = "-dynamiclib"
 	}
 	args := []string{driverFlag, "-o", outputPath}
-	if policy.TargetOS == "darwin" {
+	if policy.TargetOS == "darwin" && !hasDarwinInstallName(filtered) {
 		args = append(args, "-Xlinker", "-install_name", "-Xlinker", "@rpath/"+filepath.Base(outputPath))
 	}
 	if policy.TargetOS == "windows" {
@@ -302,7 +340,7 @@ func (l *Linker) sharedCommand(objs, ldflags []string, outputPath string, policy
 	}
 	args = append(args, filtered...)
 	args = append(args, policy.bindingFlags()...)
-	return commandSpec{Program: l.ccPath, Args: args}, nil
+	return commandSpec{Program: l.driverPath(policy.CXX), Args: args}, nil
 }
 
 func (l *Linker) objectCommand(objs []string, outputPath, workDir string) commandSpec {

@@ -74,7 +74,7 @@ type TestResult struct {
 }
 
 type Report struct {
-	Completed       bool                      `json:"-"`
+	Completed       bool `json:"-"`
 	location        string
 	configSelector  string
 	SchemaVersion   int                       `json:"schemaVersion"`
@@ -395,6 +395,7 @@ func NewSummary(result *pipeline.BuildResult, artifacts int) *Summary {
 		TargetsTotal:       len(result.Targets),
 		FilesCompiled:      result.Stats.Compiled,
 		FilesLinked:        result.Stats.Linked,
+		Callbacks:          result.Stats.Callbacks,
 		ActivitiesUpToDate: result.Stats.UpToDate,
 		ArtifactsInstalled: artifacts,
 		ChangedFiles:       changedFiles,
@@ -404,9 +405,6 @@ func NewSummary(result *pipeline.BuildResult, artifacts int) *Summary {
 		switch target.Status {
 		case build.TargetStatusBuilt:
 			summary.TargetsBuilt++
-			if target.Kind == string(api.TargetVoid) {
-				summary.Callbacks++
-			}
 		case build.TargetStatusUpToDate:
 			summary.TargetsUpToDate++
 		}

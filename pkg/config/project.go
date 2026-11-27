@@ -27,6 +27,7 @@ type projectFile struct {
 }
 
 type ProjectConfigInfo struct {
+	Roots       []string
 	Name        string
 	Path        string
 	Active      bool
@@ -554,6 +555,7 @@ func ListProjectConfigs(projectDir string) ([]ProjectConfigInfo, error) {
 				item.Error = readErr
 				if readErr == nil {
 					item.Description = cfg.Description
+					item.Roots = cfg.RootOverrides()
 				}
 			}
 			configs = append(configs, item)

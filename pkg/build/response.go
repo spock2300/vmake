@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -84,7 +85,11 @@ func (file *responseFile) ready() (bool, error) {
 	if !info.Mode().IsRegular() {
 		return false, fmt.Errorf("response file is not a regular file: %s", file.path)
 	}
-	return info.Size() == int64(len(file.content)), nil
+	if info.Size() != int64(len(file.content)) {
+		return false, nil
+	}
+	data, err := io.ReadAll(io.LimitReader(f, info.Size()+1))
+	return string(data) == file.content, err
 }
 
 type responseDirGate struct {

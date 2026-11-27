@@ -16,16 +16,11 @@ var cleanCmd = &cobra.Command{
 Use --all to remove outputs for every configuration. Downloaded source trees
 under .vmake_deps/ are kept; use 'vmake distclean --purge-sources' to remove
 them too.`,
-	Run: runClean,
+	Args: cobra.NoArgs,
+	Run:  runClean,
 }
 
 type pkgCleanEntry = pipeline.PkgCleanEntry
-
-func scanPackages(workDir string) []pkgCleanEntry {
-	entries, err := pipeline.ScanPackages(workDir)
-	fatalErr(err)
-	return entries
-}
 
 func runClean(cmd *cobra.Command, args []string) {
 	commandStorageLocks()

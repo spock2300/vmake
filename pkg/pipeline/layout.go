@@ -110,8 +110,12 @@ func (s *sourceStage) rebindLayout(name string, layout build.PackageLayout) erro
 			return err
 		}
 	}
-	if err := s.applyPatchesFor(name); err != nil {
+	hash, err := patchHashForNode(name, s.rc.ctx.DepGraph.Packages[name])
+	if err != nil {
 		return err
+	}
+	if hash != s.patchHashes[name] {
+		return fmt.Errorf("apply patches for %s: patch inputs changed during build; run the build again", name)
 	}
 	if old != nil {
 		if err := rebaseKConfigSourceDirs(s.rc.ctx, name, old.Dirs.SourceDir, layout.Dirs.SourceDir); err != nil {

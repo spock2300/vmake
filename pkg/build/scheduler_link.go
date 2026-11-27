@@ -24,7 +24,7 @@ func (s *Scheduler) finalizeTarget(resolved *ResolvedTarget, pkgInfo *PkgInfo, o
 	}
 	if target.Kind() == api.TargetVoid {
 		if len(target.Inputs()) > 0 || len(target.Outputs()) > 0 {
-			return true, s.finalizeIncrementalVoid(resolved, pkgInfo)
+			return s.finalizeIncrementalVoid(resolved, pkgInfo)
 		}
 		if err := s.buildVoidTarget(resolved); err != nil {
 			return false, err
@@ -100,10 +100,10 @@ func verifyPostLinkOutputs(target *api.Target, pkgInfo *PkgInfo, outputPath stri
 	return nil
 }
 
-func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *PkgInfo) error {
+func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *PkgInfo) (bool, error) {
 	target := resolved.Node.Target
 	if len(target.Inputs()) == 0 || len(target.Outputs()) == 0 {
-		return fmt.Errorf("target %s: TargetVoid incremental tracking requires both AddInputs and AddOutputs", resolved.Node.FullName)
+		return false, fmt.Errorf("target %s: TargetVoid incremental tracking requires both AddInputs and AddOutputs", resolved.Node.FullName)
 	}
 	buildDir := pkgInfo.EffectiveBuildDir()
 	var inputs []string
@@ -121,7 +121,7 @@ func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *P
 
 	postCommands, err := s.postLinkCommands(target, pkgInfo.SourceDir, resolved.OutputPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	var cmdEnv map[string]string
 	if s.toolchain != nil {
@@ -129,7 +129,7 @@ func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *P
 	}
 	env, err := environmentSignature(cmdEnv)
 	if err != nil {
-		return err
+		return false, err
 	}
 	action := &plannedAction{
 		Kind:            "void",
@@ -144,7 +144,7 @@ func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *P
 		Outputs:         outputs,
 		RecordPath:      resolveWorkPath(pkgInfo.SourceDir, pkgInfo.OutputPath(filepath.Join("state", pathKey(target.Name())+".void.json"))),
 	}
-	_, _, err = s.runPlannedAction(s.ctx, action, func(ctx context.Context) ([]string, error) {
+	upToDate, _, err := s.runPlannedAction(s.ctx, action, func(ctx context.Context) ([]string, error) {
 		if err := s.buildVoidTarget(resolved); err != nil {
 			return nil, err
 		}
@@ -159,7 +159,7 @@ func (s *Scheduler) finalizeIncrementalVoid(resolved *ResolvedTarget, pkgInfo *P
 		}
 		return nil, nil
 	})
-	return err
+	return !upToDate && err == nil, err
 }
 
 func realizePrebuilt(workDir string, cmd commandSpec) error {
@@ -240,6 +240,9 @@ func (s *Scheduler) buildVoidTarget(resolved *ResolvedTarget) (err error) {
 		return fmt.Errorf("create build dir: %s: %w", pkg.BuildDir(), err)
 	}
 
+	if s.stats != nil {
+		s.stats.RecordCallback()
+	}
 	if err := fn(pkg); err != nil {
 		return err
 	}

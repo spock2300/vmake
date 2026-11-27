@@ -49,7 +49,7 @@ func Main(ctx *plugin.Context) {
 import "github.com/spock2300/vmake/pkg/api"
 func Main(p *api.Package) {}
 `)
-				artifact := filepath.Join(project, "build", "old", "artifact")
+				artifact := filepath.Join(project, "build", "0123456789abcdef", "artifact")
 				writeExtensionFile(t, artifact, "artifact")
 				out, err := extensionCommand(t, stateDir, project, command...)
 				cleanAll := len(command) == 2 && command[1] == "--all"
@@ -111,7 +111,7 @@ func Main(p *api.Package) {
     })
 }
 `)
-				artifact := filepath.Join(project, "build", "old", "artifact")
+				artifact := filepath.Join(project, "build", "0123456789abcdef", "artifact")
 				writeExtensionFile(t, artifact, "artifact")
 				out, err := extensionCommand(t, stateDir, project, command...)
 				cleanAll := len(command) == 2
@@ -189,7 +189,7 @@ func Main(p *api.Package) {
     })
 }
 `)
-				artifact := filepath.Join(project, "build", "old", "artifact")
+				artifact := filepath.Join(project, "build", "0123456789abcdef", "artifact")
 				writeExtensionFile(t, artifact, "artifact")
 				out, err := extensionCommand(t, state, project, command...)
 				if err != nil {
@@ -229,7 +229,7 @@ func Main(p *api.Package) {
     p.OnClean(func(ctx *api.CleanContext) { fmt.Println("CLEAN-HOOK-RAN") })
 }
 `)
-				artifact := filepath.Join(project, "build", "old", "artifact")
+				artifact := filepath.Join(project, "build", "0123456789abcdef", "artifact")
 				writeExtensionFile(t, artifact, "artifact")
 				out, err := extensionCommand(t, state, project, command...)
 				all := len(command) == 2

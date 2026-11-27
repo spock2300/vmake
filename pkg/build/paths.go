@@ -19,6 +19,14 @@ func KeyDir(key string) string {
 	return digestDir(key)
 }
 
+func IsBuildKeyDir(name string) bool {
+	if len(name) != keyDirLen && len(name) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(name)
+	return err == nil
+}
+
 // digestDir projects a hex digest to one path component.
 func digestDir(digest string) string {
 	if len(digest) <= keyDirLen {

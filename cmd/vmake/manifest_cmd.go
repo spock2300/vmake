@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -76,7 +75,7 @@ var manifestCheckoutCmd = &cobra.Command{
 
 		sourceMgr := repo.NewSourceManager(getDepsDir(), getCacheDir()).
 			WithSession(commandStorageLocks()).
-			WithContext(context.Background())
+			WithContext(cmd.Context())
 
 		fatalErr(pipeline.CheckoutManifest(base, getDepsDir(), sourceMgr, newPkgRef, mf, filterName))
 	},

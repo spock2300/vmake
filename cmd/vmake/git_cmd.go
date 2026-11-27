@@ -43,7 +43,11 @@ Examples:
 }
 
 func runGitTag(cmd *cobra.Command, args []string) {
-	fatalErr(checkStagedChanges())
+	dir := ""
+	if projectOverride != "" {
+		dir = findProjectDir()
+	}
+	fatalErr(checkStagedChanges(dir))
 
 	var newVersion string
 	if len(args) > 0 {
@@ -51,7 +55,7 @@ func runGitTag(cmd *cobra.Command, args []string) {
 		newVersion, err = normalizeVersion(args[0])
 		fatalErr(err)
 	} else {
-		latestTag, err := getLatestTag()
+		latestTag, err := getLatestTag(dir)
 		fatalErr(err)
 		newVersion, err = bumpVersion(latestTag, gitTagMajor, gitTagMinor)
 		fatalErr(err)
@@ -63,12 +67,12 @@ func runGitTag(cmd *cobra.Command, args []string) {
 		msg = fmt.Sprintf("Release %s", newVersion)
 	}
 
-	commit, err := iexec.Run("git", gitcmd.Args("rev-parse", "--short", "HEAD")...)
+	commit, err := iexec.RunInDir("git", dir, gitcmd.Args("rev-parse", "--short", "HEAD")...)
 	fatalErr(err)
 
 	pushInfo := "no (local only)"
 	if !gitTagNoPush {
-		remote, err := getRemoteName()
+		remote, err := getRemoteName(dir)
 		if err == nil {
 			pushInfo = fmt.Sprintf("yes (%s)", remote)
 		} else {
@@ -97,30 +101,30 @@ func runGitTag(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("Creating tag %s...\n", newVersion)
 
-	fatalErr(createAnnotatedTag(newVersion, msg))
+	fatalErr(createAnnotatedTag(dir, newVersion, msg))
 	fmt.Printf("  Created tag: %s\n", newVersion)
 
-	fatalErr(updateLatestTag())
+	fatalErr(updateLatestTag(dir))
 	fmt.Printf("  Updated tag: latest -> %s\n", newVersion)
 
 	if !gitTagNoPush {
-		fatalErr(pushTags(newVersion))
+		fatalErr(pushTags(dir, newVersion))
 		fmt.Printf("  Pushed to remote\n")
 	}
 
 	fmt.Printf("Done!\n")
 }
 
-func checkStagedChanges() error {
-	_, err := iexec.Run("git", gitcmd.Args("diff", "--cached", "--quiet")...)
+func checkStagedChanges(dir string) error {
+	_, err := iexec.RunInDir("git", dir, gitcmd.Args("diff", "--cached", "--quiet")...)
 	if err != nil {
 		return fmt.Errorf("staging area has uncommitted changes, please commit first")
 	}
 	return nil
 }
 
-func getLatestTag() (string, error) {
-	output, err := iexec.Run("git", gitcmd.Args("tag", "--sort=-v:refname")...)
+func getLatestTag(dir string) (string, error) {
+	output, err := iexec.RunInDir("git", dir, gitcmd.Args("tag", "--sort=-v:refname")...)
 	if err != nil {
 		return "", fmt.Errorf("failed to list tags: %w", err)
 	}
@@ -195,29 +199,29 @@ func bumpVersion(tag string, major, minor bool) (string, error) {
 	return fmt.Sprintf("v%d.%d.%d", majorNum, minorNum, patchNum), nil
 }
 
-func createAnnotatedTag(version, msg string) error {
-	return iexec.RunToStdout("", "git", gitcmd.Args("tag", "-a", version, "-m", msg)...)
+func createAnnotatedTag(dir, version, msg string) error {
+	return iexec.RunToStdout(dir, "git", gitcmd.Args("tag", "-a", version, "-m", msg)...)
 }
 
-func updateLatestTag() error {
-	return iexec.RunToStdout("", "git", gitcmd.Args("tag", "-f", "latest")...)
+func updateLatestTag(dir string) error {
+	return iexec.RunToStdout(dir, "git", gitcmd.Args("tag", "-f", "latest")...)
 }
 
-func pushTags(version string) error {
-	remote, err := getRemoteName()
+func pushTags(dir, version string) error {
+	remote, err := getRemoteName(dir)
 	if err != nil {
 		return err
 	}
 
-	if err := iexec.RunToStdout("", "git", gitcmd.Args("push", "--atomic", remote, "HEAD", version)...); err != nil {
+	if err := iexec.RunToStdout(dir, "git", gitcmd.Args("push", "--atomic", remote, "HEAD", version)...); err != nil {
 		return err
 	}
 
-	return iexec.RunToStdout("", "git", gitcmd.Args("push", "--force", remote, "latest")...)
+	return iexec.RunToStdout(dir, "git", gitcmd.Args("push", "--force", remote, "latest")...)
 }
 
-func getRemoteName() (string, error) {
-	output, err := iexec.Run("git", gitcmd.Args("remote")...)
+func getRemoteName(dir string) (string, error) {
+	output, err := iexec.RunInDir("git", dir, gitcmd.Args("remote")...)
 	if err != nil {
 		return "", fmt.Errorf("failed to get remote: %w", err)
 	}

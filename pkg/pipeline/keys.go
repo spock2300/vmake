@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -102,16 +101,7 @@ func configRootOverrides(ctx *RuntimeContext) []string {
 	if ctx == nil || ctx.Config == nil {
 		return nil
 	}
-	var out []string
-	if r := strings.TrimSpace(ctx.Config.Root); r != "" {
-		out = append(out, r)
-	}
-	for _, raw := range ctx.Config.Roots {
-		if r := strings.TrimSpace(raw); r != "" && !slices.Contains(out, r) {
-			out = append(out, r)
-		}
-	}
-	return out
+	return ctx.Config.RootOverrides()
 }
 
 func computeReachable(graph *resolver.Graph, rootOverrides ...string) (map[string]bool, error) {

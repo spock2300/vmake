@@ -462,3 +462,45 @@ func TestWouldMaterializeMatchesEnsureSource(t *testing.T) {
 		t.Fatal("stale commit should require materialization")
 	}
 }
+
+func TestStateInvalidationFailurePreservesMaterializedTree(t *testing.T) {
+	requireGit(t)
+	for _, replace := range []bool{false, true} {
+		name := "restore"
+		if replace {
+			name = "replace"
+		}
+		t.Run(name, func(t *testing.T) {
+			upstream := writePatchableSource(t)
+			mgr := NewSourceManager(t.TempDir(), t.TempDir())
+			req := SourceRequest{Key: "sample", URLs: []string{RepoFileURL(upstream)}, Commit: gitOutput(t, upstream, "rev-parse", "HEAD")}
+			tree, err := mgr.EnsureSource(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(tree.SrcDir, "in-use")
+			if err := os.WriteFile(marker, []byte("original"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			state := filepath.Join(tree.Root, "state.json")
+			if err := os.Remove(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(state, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(state, "keep"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if replace {
+				req.Commit = commitFile(t, upstream, "lib.c", "new", "v2")
+			}
+			if _, err := mgr.EnsureSource(req); err == nil {
+				t.Fatal("invalidation failure was ignored")
+			}
+			if data, err := os.ReadFile(marker); err != nil || string(data) != "original" {
+				t.Fatalf("source was changed before invalidating its identity: %q, %v", data, err)
+			}
+		})
+	}
+}

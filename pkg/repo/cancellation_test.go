@@ -19,6 +19,7 @@ func TestSourcePreparationCommandsCancel(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			dir := t.TempDir()
 			ready, late := filepath.Join(dir, "ready"), filepath.Join(dir, "late")
+			release := filepath.Join(dir, "release")
 			// The fake git answers metadata queries and stalls on the action
 			// under test until the context cancels it.
 			body := "#!/bin/sh\n" +
@@ -31,7 +32,7 @@ func TestSourcePreparationCommandsCancel(t *testing.T) {
 				"for arg in \"$@\"; do\n" +
 				" if [ \"$arg\" = \"$VMAKE_CANCEL_ACTION\" ]; then\n" +
 				"  echo started > \"$VMAKE_CANCEL_READY\"\n" +
-				"  sleep 0.3\n" +
+				"  while [ ! -f \"$VMAKE_CANCEL_RELEASE\" ]; do sleep 0.05; done\n" +
 				"  echo late > \"$VMAKE_CANCEL_LATE\"\n" +
 				" fi\n" +
 				"done\n" +
@@ -47,7 +48,8 @@ func TestSourcePreparationCommandsCancel(t *testing.T) {
 			t.Setenv("VMAKE_CANCEL_ACTION", action)
 			t.Setenv("VMAKE_CANCEL_READY", ready)
 			t.Setenv("VMAKE_CANCEL_LATE", late)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			t.Setenv("VMAKE_CANCEL_RELEASE", release)
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			deps, cache := filepath.Join(dir, "deps"), filepath.Join(dir, "cache")
 			done := make(chan error, 1)
@@ -71,7 +73,8 @@ func TestSourcePreparationCommandsCancel(t *testing.T) {
 				}
 				done <- err
 			}()
-			deadline := time.Now().Add(3 * time.Second)
+			startup := time.NewTimer(time.Minute)
+			defer startup.Stop()
 			for {
 				if _, err := os.Stat(ready); err == nil {
 					break
@@ -79,12 +82,10 @@ func TestSourcePreparationCommandsCancel(t *testing.T) {
 				select {
 				case err := <-done:
 					t.Fatalf("command ended before cancellation: %v", err)
-				default:
+				case <-startup.C:
+					t.Fatal("Git fixture did not signal readiness")
+				case <-time.After(5 * time.Millisecond):
 				}
-				if time.Now().After(deadline) {
-					t.Fatal("command did not start")
-				}
-				time.Sleep(5 * time.Millisecond)
 			}
 			cancel()
 			select {
@@ -94,6 +95,9 @@ func TestSourcePreparationCommandsCancel(t *testing.T) {
 				}
 			case <-time.After(time.Second):
 				t.Fatal("canceled source command remained running")
+			}
+			if err := os.WriteFile(release, nil, 0600); err != nil {
+				t.Fatal(err)
 			}
 			time.Sleep(350 * time.Millisecond)
 			if _, err := os.Stat(late); !os.IsNotExist(err) {

@@ -330,9 +330,21 @@ func CheckoutDetachContext(ctx context.Context, dir, commit string) error {
 }
 
 func InitSubmodulesContext(ctx context.Context, dir string) error {
-	args := progressArgs([]string{"submodule", "update", "--init", "--depth", "1", "--recursive"})
-	_, err := runGitCmd(args, networkGitOptions(ctx, dir))
+	return initSubmodules(ctx, dir, false)
+}
+
+func initSubmodules(ctx context.Context, dir string, offline bool) error {
+	args := []string{"submodule", "update", "--init", "--depth", "1", "--recursive"}
+	opts := networkGitOptions(ctx, dir)
+	if offline {
+		opts.Env["GIT_ALLOW_PROTOCOL"] = ""
+		args = append(args, "--no-fetch")
+	}
+	_, err := runGitCmd(progressArgs(args), opts)
 	if err != nil {
+		if offline {
+			return fmt.Errorf("offline mode: could not check out submodules in %s from local objects: %w", dir, err)
+		}
 		return networkGitError(fmt.Sprintf("git submodule update --init in %s", dir), err)
 	}
 	return nil

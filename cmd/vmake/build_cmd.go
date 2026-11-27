@@ -71,7 +71,7 @@ func runReportedBuild(ctx *RuntimeContext, report *buildreport.Report, opts Buil
 		if prefix == "" && projectDir != "" {
 			prefix = filepath.Join(projectDir, "install")
 		}
-		if err := pipeline.ValidateInstallPrefix(prefix, projectDir, installStorageRoots(ctx)...); err != nil {
+		if err := pipeline.PrepareInstallPrefix(ctx.Context, prefix, projectDir, installStorageRoots(ctx)...); err != nil {
 			return nil, err
 		}
 	}

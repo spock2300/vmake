@@ -297,6 +297,7 @@ Project pins are shared by all configurations in configs/ and prevent bare
 			if !hasTarget {
 				return &usageError{err: fmt.Errorf("pin requires <pkg>@<version|commit>, got %q", args[0])}
 			}
+			commandStorageLocks()
 			projectDir := findProjectDir()
 			local, err := config.LoadLocal(projectDir)
 			if err != nil {

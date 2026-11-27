@@ -121,7 +121,7 @@ func mergeAssemblyDeps(src, objPath, depPath, workDir, intermediate string, depF
 		}
 		deps = append(deps, dep)
 	}
-	escape := strings.NewReplacer("\\", "\\\\", " ", "\\ ", "#", "\\#")
+	escape := strings.NewReplacer("$", "$$", "\\", "\\\\", " ", "\\ ", "#", "\\#")
 	var rule strings.Builder
 	rule.WriteString(escape.Replace(objPath) + ": " + escape.Replace(src))
 	for _, dep := range deps {
@@ -164,6 +164,9 @@ func tokenizeDepFile(content string) []string {
 			cur.WriteByte('\\')
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 			flush()
+		case c == '$' && i+1 < len(content) && content[i+1] == '$':
+			cur.WriteByte('$')
+			i++
 		case c == ':':
 			if i+1 >= len(content) || content[i+1] == ' ' || content[i+1] == '\t' || content[i+1] == '\n' || content[i+1] == '\r' {
 				flush()

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -21,6 +22,22 @@ type ConfigFile struct {
 	Roots       []string                `json:"roots,omitempty"`
 	Global      *GlobalConfig           `json:"global,omitempty"`
 	Entries     map[string]*EntryConfig `json:"entries"`
+}
+
+func (cfg *ConfigFile) RootOverrides() []string {
+	if cfg == nil {
+		return nil
+	}
+	var out []string
+	if r := strings.TrimSpace(cfg.Root); r != "" {
+		out = append(out, r)
+	}
+	for _, raw := range cfg.Roots {
+		if r := strings.TrimSpace(raw); r != "" && !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 type GlobalConfig struct {

@@ -23,30 +23,35 @@ type InstallOptions struct {
 	StorageRoots []string
 }
 
-func RunInstall(ctx *RuntimeContext, result *BuildResult, opts InstallOptions) (err error) {
-	defer scriptcall.Recover(&err)
+func RunInstall(ctx *RuntimeContext, result *BuildResult, opts InstallOptions) error {
 	if ctx.Context != nil && ctx.Context.Err() != nil {
 		return ctx.Context.Err()
 	}
-	globalValues := result.GlobalValues
 
+	projectDir := ""
+	if ctx.Paths != nil {
+		projectDir = ctx.Paths.ProjectDir
+	}
 	effectivePrefix := opts.Prefix
 	if effectivePrefix == "" {
-		effectivePrefix = filepath.Join(ctx.Paths.ProjectDir, "install")
+		effectivePrefix = filepath.Join(projectDir, "install")
 	}
 
 	vlog.Info("")
 	vlog.Info("Installing...")
 
-	if err := ValidateInstallPrefix(effectivePrefix, ctx.Paths.ProjectDir, opts.StorageRoots...); err != nil {
+	if err := replaceInstallPrefix(ctx.Context, effectivePrefix, projectDir, opts.StorageRoots, func() error {
+		return installIntoPrefix(ctx, result, opts, effectivePrefix)
+	}); err != nil {
 		return err
 	}
-	if err := fs.RemoveAll(effectivePrefix); err != nil {
-		return fmt.Errorf("clean install prefix: %w", err)
-	}
-	if err := fs.EnsureDir(effectivePrefix); err != nil {
-		return fmt.Errorf("create install prefix: %w", err)
-	}
+	vlog.Info("")
+	vlog.Info("Install succeeded!")
+	return nil
+}
+
+func installIntoPrefix(ctx *RuntimeContext, result *BuildResult, opts InstallOptions, effectivePrefix string) (err error) {
+	defer scriptcall.Recover(&err)
 	projectDir := ""
 	if ctx.Paths != nil {
 		projectDir = ctx.Paths.ProjectDir
@@ -78,7 +83,7 @@ func RunInstall(ctx *RuntimeContext, result *BuildResult, opts InstallOptions) (
 		if node.Pkg == nil || result.BuildCtxs[name] == nil || result.SubGraphRoots[name] {
 			continue
 		}
-		if err := InstallOnePackage(ctx, name, node, result, installer, globalValues, ctx.allOptions[name], opts.Prefix); err != nil {
+		if err := InstallOnePackage(ctx, name, node, result, installer, result.GlobalValues, ctx.allOptions[name], opts.Prefix); err != nil {
 			return err
 		}
 	}
@@ -89,14 +94,15 @@ func RunInstall(ctx *RuntimeContext, result *BuildResult, opts InstallOptions) (
 	if err := installer.InstallAll(ctx.Context); err != nil {
 		return err
 	}
-	result.InstallFiles = installer.InstalledFiles()
 
 	if err := WriteManifest(ctx, result, effectivePrefix); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
-	vlog.Info("")
-	vlog.Info("Install succeeded!")
+	if ctx.Context != nil && ctx.Context.Err() != nil {
+		return ctx.Context.Err()
+	}
+	result.InstallFiles = installer.InstalledFiles()
 	return nil
 }
 
@@ -166,19 +172,34 @@ func InstallOnePackage(ctx *RuntimeContext, name string, node *resolver.PackageN
 }
 
 func ValidateInstallPrefix(prefix, projectDir string, storageRoots ...string) error {
+	target, defaultInstall, _, err := validateInstallPrefixPath(prefix, projectDir, storageRoots...)
+	if err != nil {
+		return err
+	}
+	return validateInstallPrefixOwnership(target, defaultInstall)
+}
+
+func validateInstallPrefixPath(prefix, projectDir string, storageRoots ...string) (target, defaultInstall, projectRoot string, err error) {
 	if strings.TrimSpace(prefix) == "" {
-		return fmt.Errorf("install prefix is empty")
+		return "", "", "", fmt.Errorf("install prefix is empty")
 	}
 	absolute, err := filepath.Abs(prefix)
 	if err != nil {
-		return fmt.Errorf("resolve install prefix %q: %w", prefix, err)
+		return "", "", "", fmt.Errorf("resolve install prefix %q: %w", prefix, err)
 	}
-	target := CanonicalInstallPath(absolute)
+	target = CanonicalInstallPath(absolute)
 	if filepath.Dir(target) == target {
-		return fmt.Errorf("refusing to clean filesystem root %q as install prefix", target)
+		return "", "", "", fmt.Errorf("refusing to clean filesystem root %q as install prefix", target)
 	}
-	if info, err := os.Stat(absolute); err == nil && !info.IsDir() {
-		return fmt.Errorf("refusing to clean install prefix %q: it is not a directory", target)
+	if linkInfo, lstatErr := os.Lstat(absolute); lstatErr == nil {
+		if linkInfo.Mode()&os.ModeSymlink != 0 {
+			info, statErr := os.Stat(absolute)
+			if statErr != nil || !info.IsDir() {
+				return "", "", "", fmt.Errorf("refusing to clean install prefix %q: it is not a directory", target)
+			}
+		} else if !linkInfo.IsDir() {
+			return "", "", "", fmt.Errorf("refusing to clean install prefix %q: it is not a directory", target)
+		}
 	}
 	protected := make([]string, 0, 4)
 	if cwd, err := os.Getwd(); err == nil {
@@ -190,43 +211,44 @@ func ValidateInstallPrefix(prefix, projectDir string, storageRoots ...string) er
 	if projectDir != "" {
 		protected = append(protected, projectDir)
 	}
-	projectRoot := ""
 	if projectDir != "" {
-		absolute, err := filepath.Abs(projectDir)
-		if err == nil {
-			projectRoot = CanonicalInstallPath(absolute)
+		if absProject, err := filepath.Abs(projectDir); err == nil {
+			projectRoot = CanonicalInstallPath(absProject)
 		}
 	}
 	for _, path := range protected {
-		absolute, err := filepath.Abs(path)
+		absProtected, err := filepath.Abs(path)
 		if err != nil {
 			continue
 		}
-		path = CanonicalInstallPath(absolute)
+		path = CanonicalInstallPath(absProtected)
 		if target == path || InstallPathAncestor(target, path) {
-			return fmt.Errorf("refusing to clean %q as install prefix: it is %q or one of its ancestors", target, path)
+			return "", "", "", fmt.Errorf("refusing to clean %q as install prefix: it is %q or one of its ancestors", target, path)
 		}
 	}
 	for _, path := range storageRoots {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
-		absolute, err := filepath.Abs(path)
+		absStorage, err := filepath.Abs(path)
 		if err != nil {
 			continue
 		}
-		path = CanonicalInstallPath(absolute)
+		path = CanonicalInstallPath(absStorage)
 		if target == path || InstallPathAncestor(path, target) || InstallPathAncestor(target, path) {
-			return fmt.Errorf("refusing to clean %q as install prefix: it overlaps vmake storage %q", target, path)
+			return "", "", "", fmt.Errorf("refusing to clean %q as install prefix: it overlaps vmake storage %q", target, path)
 		}
 	}
-	defaultInstall := ""
 	if projectRoot != "" {
 		defaultInstall = CanonicalInstallPath(filepath.Join(projectRoot, "install"))
 		if target != defaultInstall && !InstallPathAncestor(defaultInstall, target) && InstallPathAncestor(projectRoot, target) {
-			return fmt.Errorf("refusing to clean %q as install prefix: it is inside project root %q; use the default install directory or a path outside the project", target, projectRoot)
+			return "", "", "", fmt.Errorf("refusing to clean %q as install prefix: it is inside project root %q; use the default install directory or a path outside the project", target, projectRoot)
 		}
 	}
+	return target, defaultInstall, projectRoot, nil
+}
+
+func validateInstallPrefixOwnership(target, defaultInstall string) error {
 	if target != defaultInstall && !InstallPathAncestor(defaultInstall, target) {
 		if info, err := os.Stat(target); err == nil && info.IsDir() && !installPrefixEmpty(target) && !fs.FileExists(filepath.Join(target, InstallOwnershipMarker)) {
 			return fmt.Errorf("refusing to clean non-empty custom install prefix %q: use a new/empty directory or remove it manually; vmake only reuses directories carrying %s", target, InstallOwnershipMarker)

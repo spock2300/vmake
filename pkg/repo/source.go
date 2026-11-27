@@ -40,7 +40,7 @@ type gitTransport struct {
 	FetchShallowRef     func(ctx context.Context, url, dir, localRef, commit string) (string, error)
 	CloneShallow        func(ctx context.Context, url, dir string) error
 	CloneFull           func(ctx context.Context, url, dir string) error
-	InitSubmodules      func(ctx context.Context, dir string) error
+	InitSubmodules      func(ctx context.Context, dir string, offline bool) error
 }
 
 func defaultGitTransport() gitTransport {
@@ -51,7 +51,7 @@ func defaultGitTransport() gitTransport {
 		FetchShallowRef:     FetchShallowRefContext,
 		CloneShallow:        CloneShallowContext,
 		CloneFull:           CloneContext,
-		InitSubmodules:      InitSubmodulesContext,
+		InitSubmodules:      initSubmodules,
 	}
 }
 
@@ -158,12 +158,13 @@ func (m *SourceManager) treePath(key string) (string, error) {
 
 // TreeState records how a package tree was materialized.
 type TreeState struct {
-	URLs       []string `json:"urls"`
-	Version    string   `json:"version,omitempty"`
-	Ref        string   `json:"ref,omitempty"`
-	Commit     string   `json:"commit"`
-	PatchHash  string   `json:"patchHash,omitempty"`
-	Submodules bool     `json:"submodules,omitempty"`
+	URLs           []string `json:"urls"`
+	Version        string   `json:"version,omitempty"`
+	Ref            string   `json:"ref,omitempty"`
+	Commit         string   `json:"commit"`
+	PatchHash      string   `json:"patchHash,omitempty"`
+	Submodules     bool     `json:"submodules,omitempty"`
+	PatchesApplied bool     `json:"patchesApplied,omitempty"`
 }
 
 func (m *SourceManager) statePath(root string) string {
@@ -260,10 +261,41 @@ func (m *SourceManager) reusableState(req SourceRequest, state *TreeState, srcDi
 	if m.treeHead(srcDir) != state.Commit {
 		return false
 	}
+	if state.PatchHash != "" && !state.PatchesApplied {
+		return false
+	}
 	if req.ResolveOnly {
 		return true
 	}
-	return state.PatchHash == req.PatchHash && state.Submodules == req.Submodules
+	if state.PatchHash != req.PatchHash || state.Submodules != req.Submodules {
+		return false
+	}
+	if req.Submodules && !m.submodulesReady(srcDir) {
+		return false
+	}
+	return true
+}
+
+func (m *SourceManager) submodulesReady(srcDir string) bool {
+	if !fs.FileExists(filepath.Join(srcDir, ".gitmodules")) {
+		return true
+	}
+	out, err := runGitCmd([]string{"submodule", "status", "--recursive"}, exec.RunOptions{
+		Context: m.context(), Dir: srcDir, Quiet: true,
+	})
+	if err != nil {
+		return false
+	}
+	raw := strings.TrimRight(string(out), "\r\n")
+	if raw == "" {
+		return true
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		if len(line) == 0 || line[0] != ' ' {
+			return false
+		}
+	}
+	return true
 }
 
 // WouldMaterialize reports whether EnsureSource would fetch or recreate the
@@ -472,7 +504,9 @@ func (m *SourceManager) materialize(req SourceRequest, root, srcDir string, stat
 		return "", "", err
 	}
 	if m.treeHead(srcDir) == commit && (state == nil || len(req.URLs) == 0 || sameURLs(state.URLs, req.URLs)) {
-		_ = os.Remove(m.statePath(root))
+		if err := m.invalidateState(root); err != nil {
+			return "", "", fmt.Errorf("invalidate tree identity for %s: %w", req.Key, err)
+		}
 		if err := m.restoreTree(req, srcDir, commit); err != nil {
 			return "", "", err
 		}
@@ -499,7 +533,7 @@ func (m *SourceManager) materialize(req SourceRequest, root, srcDir string, stat
 			continue
 		}
 		if req.Submodules {
-			if err := m.git().InitSubmodules(m.context(), tmp); err != nil {
+			if err := m.git().InitSubmodules(m.context(), tmp, req.Offline); err != nil {
 				if ctxErr := m.context().Err(); ctxErr != nil {
 					return "", "", ctxErr
 				}
@@ -515,7 +549,9 @@ func (m *SourceManager) materialize(req SourceRequest, root, srcDir string, stat
 		}
 		// Invalidate the identity before destroying the old tree: a crash
 		// between here and the state write must force a clean re-materialization.
-		_ = os.Remove(m.statePath(root))
+		if err := m.invalidateState(root); err != nil {
+			return "", "", fmt.Errorf("invalidate tree identity for %s: %w", req.Key, err)
+		}
 		if err := fs.RemoveAll(srcDir); err != nil {
 			return "", "", err
 		}
@@ -724,7 +760,7 @@ func (m *SourceManager) restoreTree(req SourceRequest, srcDir, commit string) er
 	}
 	if req.Submodules {
 		vlog.Info("  %s: updating submodules in %s", req.Key, srcDir)
-		if err := m.git().InitSubmodules(m.context(), srcDir); err != nil {
+		if err := m.git().InitSubmodules(m.context(), srcDir, req.Offline); err != nil {
 			return fmt.Errorf("init submodules for %s: %w", req.Key, err)
 		}
 	}
@@ -738,15 +774,32 @@ func stateURLs(state *TreeState) []string {
 	return state.URLs
 }
 
-// ClearPatchState marks a tree as no longer carrying its patch set, forcing
-// the next EnsureSource to recreate it. Used when patch application fails so a
-// partially patched tree is never reused indefinitely.
-func (m *SourceManager) ClearPatchState(root string) error {
-	state, err := m.ReadState(root)
-	if err != nil || state == nil || state.PatchHash == "" {
+func (m *SourceManager) invalidateState(root string) error {
+	if err := m.validateManagedPath(root); err != nil {
 		return err
 	}
-	state.PatchHash = ""
+	if err := os.Remove(m.statePath(root)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (m *SourceManager) ClearPatchState(root string) error {
+	return m.invalidateState(root)
+}
+
+func (m *SourceManager) FinishPatchSet(root, hash string) error {
+	if err := m.validateManagedPath(root); err != nil {
+		return err
+	}
+	state, err := m.ReadState(root)
+	if err != nil {
+		return err
+	}
+	if state == nil || hash == "" || state.PatchHash != hash {
+		return fmt.Errorf("source identity changed while applying patches in %s", root)
+	}
+	state.PatchesApplied = true
 	return jsonio.Save(m.statePath(root), state)
 }
 

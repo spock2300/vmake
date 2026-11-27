@@ -37,6 +37,28 @@ type InstallManifestEntry struct {
 	LinkPath string `json:"linkPath,omitempty"`
 }
 
+func (e InstallManifestEntry) isPathModule() bool {
+	return e.Source == resolver.SourceKindNative.String() && e.Version == resolver.LocalPathVersion && e.URL == "" && e.Path != ""
+}
+
+func (e InstallManifestEntry) pathModuleDir(root string) (string, os.FileInfo, error) {
+	if e.Path == "" {
+		return "", nil, fmt.Errorf("manifest path module %s has no recorded directory", e.Name)
+	}
+	dir := filepath.FromSlash(e.Path)
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(root, dir)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", nil, fmt.Errorf("manifest path module %s: %w", e.Name, err)
+	}
+	if !info.IsDir() {
+		return "", nil, fmt.Errorf("manifest path module %s: %s is not a directory", e.Name, dir)
+	}
+	return dir, info, nil
+}
+
 type InstallManifest struct {
 	VMake     string                 `json:"vmake"`
 	Toolchain string                 `json:"toolchain"`
@@ -229,7 +251,7 @@ func ImportManifestIntoLock(ctx context.Context, projectDir, lockPath string, mf
 	for _, entry := range mf.Packages {
 		switch entry.Source {
 		case "native", "registry", "git", "local":
-			if entry.Source == "local" && entry.URL == "" {
+			if entry.isPathModule() || (entry.Source == "local" && entry.URL == "") {
 				continue
 			}
 			if _, linked := local.Links[entry.Name]; linked {
@@ -291,6 +313,27 @@ func CheckoutManifestLocals(ctx *RuntimeContext, mf *InstallManifest) error {
 	}
 
 	for _, entry := range mf.Packages {
+		if entry.isPathModule() {
+			container := ctx.DepGraph.Containers[entry.Name]
+			if container != nil && container.IsLinked() {
+				continue
+			}
+			if !container.IsLocalPath() {
+				return fmt.Errorf("manifest path module %s is not a path module in the project graph", entry.Name)
+			}
+			_, recorded, err := entry.pathModuleDir(base)
+			if err != nil {
+				return err
+			}
+			selected, err := os.Stat(container.Dir)
+			if err != nil {
+				return err
+			}
+			if !os.SameFile(recorded, selected) {
+				return fmt.Errorf("manifest path %q does not match module %s directory %q", entry.Path, entry.Name, container.Dir)
+			}
+			continue
+		}
 		if entry.Source != "local" {
 			continue
 		}
@@ -346,6 +389,7 @@ func CheckoutManifest(
 		return err
 	}
 	found := false
+	var failures []error
 	for _, entry := range mf.Packages {
 		if filterName != "" && entry.Name != filterName {
 			continue
@@ -356,13 +400,24 @@ func CheckoutManifest(
 			continue
 		}
 
+		if entry.isPathModule() {
+			dir, _, err := entry.pathModuleDir(projectDir)
+			if err != nil {
+				failures = append(failures, err)
+			} else {
+				fmt.Printf("  SKIP %s (local path module at %s)\n", entry.Name, dir)
+			}
+			continue
+		}
 		switch entry.Source {
 		case "local":
 			if err := CheckoutManifestLocalEntry(projectDir, sourceMgr, entry); err != nil {
-				return err
+				return errors.Join(append(failures, err)...)
 			}
 		case "native", "registry", "git":
-			CheckoutManifestRemoteEntry(sourceMgr, workspace, newPkgRef, entry)
+			if err := CheckoutManifestRemoteEntry(sourceMgr, workspace, newPkgRef, entry); err != nil {
+				failures = append(failures, fmt.Errorf("checkout %s: %w", entry.Name, err))
+			}
 		default:
 			fmt.Printf("  SKIP %s (unknown source: %s)\n", entry.Name, entry.Source)
 		}
@@ -370,7 +425,7 @@ func CheckoutManifest(
 	if filterName != "" && !found {
 		return fmt.Errorf("Package '%s' not found in manifest", filterName)
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func CheckoutManifestRemoteEntry(
@@ -378,19 +433,17 @@ func CheckoutManifestRemoteEntry(
 	workspace *SourceWorkspace,
 	newPkgRef func(repoName, pkgName string) *api.Package,
 	entry InstallManifestEntry,
-) {
+) error {
 	if entry.Ref == "" {
 		fmt.Printf("  SKIP %s (no ref recorded)\n", entry.Name)
-		return
+		return nil
 	}
 	if sourceMgr == nil || workspace == nil {
-		fmt.Printf("  FAIL %s (source manager unavailable)\n", entry.Name)
-		return
+		return errors.New("source manager unavailable")
 	}
 	repoName, pkgName, ok := api.SplitPackageRef(entry.Name)
 	if !ok {
-		fmt.Printf("  SKIP %s (invalid package reference)\n", entry.Name)
-		return
+		return fmt.Errorf("invalid package reference %q", entry.Name)
 	}
 	var urls []string
 	if newPkgRef != nil {
@@ -408,14 +461,13 @@ func CheckoutManifestRemoteEntry(
 	}
 	source, err := workspace.Package(entry.Name)
 	if err != nil {
-		fmt.Printf("  FAIL %s (%v)\n", entry.Name, err)
-		return
+		return err
 	}
 	if _, err := source.Ensure(req, sourceMgr); err != nil {
-		fmt.Printf("  FAIL %s (%v)\n", entry.Name, err)
-		return
+		return err
 	}
 	fmt.Printf("  OK   %s -> %s\n", entry.Name, entry.Ref)
+	return nil
 }
 
 func CheckoutManifestLocalEntry(projectDir string, sourceMgr *repo.SourceManager, entry InstallManifestEntry) error {
@@ -487,7 +539,11 @@ func detectLocalManagedGit(projectDir, name, sourceDir, scriptPath string) ([]st
 		scriptfs.TakeBlockedWrites()
 		restoreReadOnly()
 	}()
-	opts, err := buildscript.DetectScriptOptions(sourceDir, projectDir)
+	root, err := fs.CanonicalPath(projectDir)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve manifest project root: %w", err)
+	}
+	opts, err := buildscript.DetectScriptOptions(sourceDir, root)
 	if err != nil {
 		return nil, false, fmt.Errorf("script options: %w", err)
 	}
