@@ -175,7 +175,7 @@ vmake.json (roots/modules/sources)  LoadBuildScript          Resolve
 3. `resolver.Resolver` 递归解析 `OnRequire` 声明的纯包 ID（无内联版本约束；版本约束集中声明在各模块的 `vmake.json` `modules` / `sources`），生成双层 `Graph`（`Containers` 模块容器表 + `Packages` 构建包图与拓扑排序）
 4. `Resolver.ResolveAll` 在 Phase 1 内完成全部容器与构建包解析：原生模块容器（`<repo>/<module>`）在 Phase 1 选定版本并通过 `EnsureSource`（ResolveOnly）物化浅工作树以按路径加载其 `build.go`；registry 包与 `SetGit` 独立上游源码的下载物化延迟到 Phase 3 `prepareAllPackages`（`EnsureSource`）
 
-源码准备后、OnBuild 前自动应用补丁：补丁就地应用到对应工作树（原生模块容器 `.vmake_deps/<repo>/<module>/src`、容器内 `SetGit` 独立上游源码 `.vmake_deps/<repo>/<module>/third_party/<memberDir>/src`、本地 `SetGit` 源码 `.vmake_deps/local/<memberDir>/src`）；同一 commit 已锁定时，补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复，不重新抓取对象。补丁内容按声明顺序进入远程构建键与工作树身份；本地 `SetGit` 构建包的工作树身份也包含补丁集，但本地 `BuildDir` 不随补丁集变化轮换。
+源码准备后、OnBuild 前自动应用补丁：补丁仅就地应用到 vmake 托管的工作树（原生模块容器 `.vmake_deps/<repo>/<module>/src`、容器内 `SetGit` 独立上游源码 `.vmake_deps/<repo>/<module>/third_party/<memberDir>/src`、本地 `SetGit` 源码 `.vmake_deps/local/<memberDir>/src`），普通本地源码（无 `SetGit`）、`vmake pkg link` 与 `0.0.0-path` 本地路径模块均视为用户自管并拒绝打补丁；同一 commit 已锁定时，补丁集变化先 `checkout --force --detach` + `clean -fdx` 恢复，不重新抓取对象，整套补丁完成后在 `state.json` 记录 `patchesApplied` 以跳过后续重复应用。补丁内容按声明顺序进入远程构建键与工作树身份；本地 `SetGit` 构建包的工作树身份也包含补丁集，但本地 `BuildDir` 不随补丁集变化轮换。
 
 源码：`pkg/manifest/`, `pkg/buildscript/`, `pkg/resolver/resolver.go`, `pkg/resolver/container_adapter.go`
 

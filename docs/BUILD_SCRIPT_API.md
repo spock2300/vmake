@@ -101,7 +101,7 @@ func (p *Package) SetPatches(paths ...string) *Package
 func (p *Package) GetPatches() []string
 ```
 
-Patch 路径相对 `ScriptDir()`（build.go 所在目录）。Patch 文件在源码下载后、构建前通过 `git apply --3way` 自动应用。已应用的 patch 会被跳过。
+Patch 路径相对 `ScriptDir()`（`build.go` 所在目录）。`AddPatches` / `SetPatches` 仅适用于 vmake 托管的 Git 源码树（远程包，以及声明了 `SetGit` 的本地包或原生子包）；普通本地源码（未声明 `SetGit`）、`vmake pkg link` 链接目录和 `0.0.0-path` 本地路径模块均属于用户自管工作区，声明补丁会在写文件前直接拒绝（`user-managed`）。补丁按声明顺序在受管源码物化后、构建前通过 `git apply --3way` 应用，整套补丁完成后在受管树 `state.json` 记录 `patchesApplied` 并在后续构建自动跳过；若补丁集变化，vmake 会先重置受管树到锁定提交再重新应用。
 
 ### 包依赖
 
@@ -1519,22 +1519,24 @@ func Main(p *api.Package) {
 
 ```go
 func Main(p *api.Package) {
-    p.AddPatches("patches/fix-build.patch")
-
-    p.OnRequire(func(ctx *api.RequireContext) {
-        ctx.AddRequires("official/zlib >=1.2")
+    p.OnPackage(func(pkg *api.Package) {
+        pkg.SetGit("https://github.com/example/foo.git").
+            AddVersion("1.2.0", "v1.2.0").
+            AddPatches("patches/fix-build.patch", "patches/fix-warnings.patch")
     })
 
     p.OnBuild(func(ctx *api.BuildContext) {
-        ctx.Target("app").
-            SetKind(api.TargetBinary).
+        ctx.Target("foo").
+            SetKind(api.TargetStatic).
             AddFiles("src/*.c").
-            AddDeps("official/zlib")
+            AddPublicIncludes("src/include")
     })
 }
 ```
 
-Patch 文件在源码下载后、构建前通过 `git apply --3way` 自动应用。已应用的 patch 会被跳过。
+> **兼容性说明**：`AddPatches` / `SetPatches` 仅支持 vmake 托管的 Git 源码树（远程包，或声明了 `SetGit` 的本地/子包）。普通本地源码（未声明 `SetGit`）、`vmake pkg link` 链接目录以及 `0.0.0-path` 本地路径模块属于用户自管工作区，声明补丁会在写文件前报错 `source ... is user-managed` 并保持本地文件不变。
+
+受管树的补丁在源码物化后、构建前按声明顺序通过 `git apply --3way` 自动应用；整套补丁完成后会记录在受管树的 `state.json`（`patchesApplied`）中，后续构建自动跳过（即使多个补丁连续修改同一行也不会重复打补丁）。若补丁列表或内容发生变化，vmake 会先将受管工作树恢复到锁定提交再按顺序重新应用。
 
 ### 第三方包定义 (`official_repo/z/zlib`)
 
